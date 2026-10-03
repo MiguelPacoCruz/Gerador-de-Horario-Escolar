@@ -60,7 +60,7 @@ def _():
 
     H = 6 # Horas
     D = 5 # Dias
-    return D, H, horario
+    return D, H, horario, pywraplp
 
 
 @app.cell
@@ -98,7 +98,6 @@ def _(disciplinas):
         if p not in prof:
             prof[p] = []
         prof[p].append(i)
-
     return CS, lUC, prof
 
 
@@ -115,7 +114,7 @@ def _(disciplinas, lUC, pd, salas):
 
 
 @app.cell
-def _(D, H, S, T, horario, lUC, uc):
+def _(D, H, S, T, horario, lUC):
     x = {}
 
     for turma in range(T):
@@ -129,7 +128,7 @@ def _(D, H, S, T, horario, lUC, uc):
                     for sala in range(S):
                         x[turma][disciplina][dia][hora][sala] = horario.IntVar(0,1,'x_%i_%i_%i_%i_%i' % (turma,disciplina,dia,hora,sala))
 
-    def X(t,cs,d,h,s):              # abreviatura
+    def X(t,uc,d,h,s):              # abreviatura
         return x[t][uc][d][h][s]
 
     return (X,)
@@ -183,8 +182,7 @@ def _(D, H, S, T, X, disciplinas, horario, lUC):
         for uc_r3 in range(lUC):
             if disciplinas.loc[uc_r3,"duplo_periodo"] == "nao":
                 for d_r3 in range(D):
-                    for h_r3 in range(H):
-                        horario.Add(sum([X(turma_r3,uc_r3,d_r3,h_r3,s_r3) for s_r3 in range(S)]) <= 1)
+                    horario.Add(sum([X(turma_r3,uc_r3,d_r3,h_r3,s_r3) for s_r3 in range(S) for h_r3 in range(H)]) <= 1)
     return
 
 
@@ -210,21 +208,21 @@ def _(D, H, S, T, X, disciplinas, horario, lUC):
         for uc_r4 in range(lUC):
             if disciplinas.loc[uc_r4, "duplo_periodo"] == "sim":
                 for d_r4 in range(D):
-        
+
                     # 1. Garantir consecutividade entre os tempos h
                     for h_r4 in range(H):
                         aulas_atual = sum([X(turma_r4, uc_r4, d_r4, h_r4, s) for s in range(S)])
-            
+
                         if h_r4 == 0:
                             # Se h=0, exige aula em h=1
                             aulas_prox = sum([X(turma_r4, uc_r4, d_r4, 1, s) for s in range(S)])
                             horario.Add(aulas_atual <= aulas_prox)
-                
+
                         elif h_r4 == H - 1:
                             # Se é o último slot, exige aula em h=H-2
                             aulas_ant = sum([X(turma_r4, uc_r4, d_r4, H - 2, s) for s in range(S)])
                             horario.Add(aulas_atual <= aulas_ant)
-                
+
                         else:
                             # Slot intermédio: exige aula em h-1 OU h+1
                             aulas_ant = sum([X(turma_r4, uc_r4, d_r4, h_r4 - 1, s) for s in range(S)])
@@ -247,13 +245,10 @@ def _(mo):
 
 @app.cell
 def _(D, H, S, T, X, horario, prof):
-    for prof_r5 in prof:
-        ucs_r5 = prof[prof_r5]
-        if len(ucs_r5) >= 2:
-            for uc_r5 in ucs_r5:
-                for dia_r5 in range(D):
-                    for hora_r5 in range(H):
-                        horario.Add(sum([X(t_r5,uc_r5,dia_r5,hora_r5,s_r5) for t_r5 in range(T) for s_r5 in range(S)])<= 1) 
+    for prof_nome, ucs_do_prof in prof.items():
+        for d_r5 in range(D):
+            for h_r5 in range(H):
+                horario.Add(sum([X(t_r5, uc_r5, d_r5, h_r5, s_r5) for uc_r5 in ucs_do_prof for t_r5 in range(T) for s_r5 in range(S)]) <= 1)
     return
 
 
@@ -266,25 +261,12 @@ def _(mo):
 
 
 @app.cell
-def _(D, H, S, T, X, exc, horario, prof):
-    def r6(prof_r6,excs_r6):
-        for exc_r6 in excs_r6:
-            for dia_r6 in range(D):
-                for hora_r6 in range(H):
-                    if (dia_r6,hora_r6) == exc_r6:
-                        ucs_r6 = prof[prof_r6]
-                        for uc_r6 in ucs_r6:
-                            horario.Add(sum([X(t_r6,uc_r6,dia_r6,hora_r6,s_r6) for t_r6 in range(T) for s_r6 in range(S)])<= 0)
-                    
-        return 0
-
-    for profs_r6 in exc:
-        if len(exc) > 1:
-            for prof_r6 in profs_r6:
-                r6(prof_r6,prof[prof_r6])
-               
-        elif len(exc) == 1:
-            r6(profs_r6,exc[profs_r6])
+def _(S, T, X, exc, horario, prof):
+    for prof_nome_r6, excecoes_prof_r6 in exc.items():
+        for dia_exc_r6, hora_exc_r6 in excecoes_prof_r6:
+            ucs_do_prof_r6 = prof[prof_nome_r6]
+            for uc_r6 in ucs_do_prof_r6:
+                horario.Add(sum([X(t_r6, uc_r6, dia_exc_r6, hora_exc_r6, s_r6) for t_r6 in range(T) for s_r6 in range(S)]) == 0)
     return
 
 
@@ -297,21 +279,163 @@ def _(mo):
 
 
 @app.cell
-def _(Se, disciplinas, salas):
-    print(salas)
-    print("\n")
-    print(disciplinas)
-    print(Se)
+def _(D, H, S, Se, T, X, horario, lUC, salas):
+    # 1. Garantir que a UC só usa o tipo de sala permitido
+    for t1_r7 in range(T):
+        for uc1_r7 in range(lUC):
+            sala_exigida = Se[uc1_r7]
+            for d1_r7 in range(D):
+                for h1_r7 in range(H):
+                    for s1_r7 in range(S):
+                        if s1_r7 != sala_exigida:
+                            horario.Add(X(t1_r7, uc1_r7, d1_r7, h1_r7, s1_r7) == 0)
+
+    # 2. Capacidade máxima global do tipo de sala em simultâneo
+    for d2_r7 in range(D):
+        for h2_r7 in range(H):
+            for s2_r7 in range(S):
+                capacidade_sala = int(salas.loc[s2_r7, "quantidade"])
+                # Soma todas as turmas e todas as UCs que possam estar a usar o tipo de sala 's'
+                horario.Add(sum([X(t2_r7, uc2_r7, d2_r7, h2_r7, s2_r7) for t2_r7 in range(T) for uc2_r7 in range(lUC)]) <= capacidade_sala)
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## O1. Minimizar o número total de "buracos" no horário de cada professor — um buraco é um tempo livre, no meio do dia, entre a primeira e a última aula desse professor nesse dia.
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    # Correr o solver
+    """)
     return
 
 
 @app.cell
-def _(D, H, S, Se, T, X, horario, lUC, salas):
-    for d_r7 in range(D):
-        for h_r7 in range(H):
-            for s_r7 in range(S):
-                for uc_r7 in range(lUC):
-                        horario.Add(sum([X(t_r7,uc_r7,d_r7,h_r7,s_r7) for t_r7 in range(T)]) <= salas.loc[Se[uc_r7],"quantidade"])
+def _(horario, pywraplp):
+    status = horario.Solve()
+
+    if status == pywraplp.Solver.OPTIMAL:
+        print("Solução ótima encontrada!")
+    elif status == pywraplp.Solver.FEASIBLE:
+        print("Foi encontrada uma solução viável.")
+    else:
+        print("Não foi encontrada nenhuma solução.")
+    return
+
+
+@app.cell
+def _(D, H, S, T, X, disciplinas, lUC, salas, turmas):
+    solucao = []
+
+    for t in range(T):
+        for uc in range(lUC):
+            for d in range(D):
+                for h in range(H):
+                    for s in range(S):
+                        if X(t, uc, d, h, s).solution_value() == 1:
+                            solucao.append({
+                                "turma": turmas.loc[t,"turma"],
+                                "disciplina": disciplinas.loc[uc,"disciplina"],
+                                "professor": disciplinas.loc[uc,"professor"],
+                                "dia": d,
+                                "hora": h,
+                                "sala": salas.loc[s,"sala"]
+                            })
+
+    print(solucao)
+    return (solucao,)
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## Representação dos dados
+    """)
+    return
+
+
+@app.cell
+def _(pd, solucao):
+    horario_df = pd.DataFrame(solucao).sort_values(["dia", "hora"]).reset_index(drop=True)
+    return (horario_df,)
+
+
+@app.cell
+def _(horario_df, mo):
+    lista_turmas = sorted(horario_df["turma"].unique())
+    lista_professores = sorted(horario_df["professor"].unique())
+
+    turmaUi = mo.ui.dropdown(
+        options=lista_turmas,
+        value=lista_turmas[0],
+        label="Turma",
+    )
+
+    professorUi = mo.ui.dropdown(
+        options=lista_professores,
+        value=lista_professores[0],
+        label="Professor",
+    )
+    return professorUi, turmaUi
+
+
+@app.cell
+def _(D, H):
+    dias_nomes = ["Segunda", "Terça", "Quarta", "Quinta", "Sexta"]   # ajusta a D
+    horas_nomes = [f"{8 + h}:00" for h in range(H)]                  # ajusta ao teu horário real
+
+    def grelha(df, texto):
+        df = df.copy()
+        df["celula"] = df.apply(texto, axis=1)
+
+        g = df.pivot_table(
+            index="hora",
+            columns="dia",
+            values="celula",
+            aggfunc=lambda x: " / ".join(x),   # se houver choque, aparecem as duas aulas
+        )
+
+        # garante todas as horas e todos os dias, mesmo vazios
+        g = g.reindex(index=range(H), columns=range(D)).fillna("")
+        g.index = horas_nomes
+        g.columns = dias_nomes
+        g.index.name = "Hora"
+        return g.reset_index()
+
+    return (grelha,)
+
+
+@app.cell
+def _(H, grelha, horario_df, mo, professorUi, turmaUi):
+    grelha_turma_df = grelha(
+        horario_df[horario_df["turma"] == turmaUi.value],
+        lambda r: f"{r['disciplina']} ({r['sala']}) - {r['professor']}",
+    )
+
+    grelha_professor_df = grelha(
+        horario_df[horario_df["professor"] == professorUi.value],
+        lambda r: f"{r['disciplina']} ({r['sala']}) - {r['turma']}",
+    )
+
+    tabela_turma = mo.ui.table(grelha_turma_df, selection=None, page_size=H)
+    tabela_professor = mo.ui.table(grelha_professor_df, selection=None, page_size=H)
+    return tabela_professor, tabela_turma
+
+
+@app.cell
+def _(mo, professorUi, tabela_professor, tabela_turma, turmaUi):
+    mo.vstack([
+        turmaUi,
+        tabela_turma,
+        professorUi,
+        tabela_professor,
+    ])
     return
 
 
