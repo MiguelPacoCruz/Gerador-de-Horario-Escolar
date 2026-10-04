@@ -49,7 +49,7 @@ def _():
     path2 = "dados_v2/"
     path3 = "dados_v3/"
 
-    arg = path
+    arg = path3
 
     disciplinas = pd.read_csv(arg+"disciplinas.csv")
     excecoes = pd.read_csv(arg+"disponibilidade_excecoes.csv")
@@ -77,8 +77,6 @@ def _(excecoes, professores):
         if p_exc not in exc:
             exc[p_exc] = []
         exc[p_exc].append((dM[excecoes.loc[k,"dia"]],int(excecoes.loc[k,"periodo"])-1))  # no CSV o periodo é 1..5
-
-    print(exc)
     return (exc,)
 
 
@@ -280,14 +278,6 @@ def _(D, H, P, S, T, X, disciplinas, horario, lUC):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
- 
-    """)
-    return
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
     ## R4. Disciplinas marcadas duplo_periodo=sim só podem ser dadas em blocos de 2 tempos consecutivos, no mesmo dia (nunca um tempo isolado).
 
     Cada tempo ocupado tem de ter um vizinho imediato (antes ou depois) com o mesmo professor e a mesma sala, com $x_{t,u,p,d,-1,s}=x_{t,u,p,d,H,s}=0$:
@@ -462,7 +452,7 @@ def _(mo):
 
 @app.cell
 def _(professores, pywraplp):
-    def obter_solucao(horario, X, turmas, ucs, disciplinas, salas, T, lUC, P, D, H, S):
+    def obter_solucao(horario, X, turmas, ucs, T, lUC, P, D, H, S):
             status = horario.Solve()
 
             if status == pywraplp.Solver.OPTIMAL:
@@ -497,23 +487,9 @@ def _(professores, pywraplp):
 
 
 @app.cell
-def _(
-    D,
-    H,
-    P,
-    S,
-    T,
-    X,
-    disciplinas,
-    horario,
-    lUC,
-    obter_solucao,
-    salas,
-    turmas,
-    ucs,
-):
+def _(D, H, P, S, T, X, horario, lUC, obter_solucao, turmas, ucs):
     solucao = obter_solucao(
-        horario, X, turmas, ucs, disciplinas, salas, T, lUC, P, D, H, S
+        horario, X, turmas, ucs, T, lUC, P, D, H, S
     )
     return (solucao,)
 
