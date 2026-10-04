@@ -271,28 +271,33 @@ def _(D, H, S, T, X, disciplinas, horario, lUC):
             if disciplinas.loc[uc_r4, "duplo_periodo"] == "sim":
                 for d_r4 in range(D):
 
-                    # 1. Garantir consecutividade entre os tempos h
-                    for h_r4 in range(H):
-                        aulas_atual = sum([X(turma_r4, uc_r4, d_r4, h_r4, s) for s in range(S)])
+                    # 1. Garantir consecutividade NA MESMA SALA s
+                    for s in range(S):
+                        for h_r4 in range(H):
+                            aula_atual = X(turma_r4, uc_r4, d_r4, h_r4, s)
 
-                        if h_r4 == 0:
-                            # Se h=0, exige aula em h=1
-                            aulas_prox = sum([X(turma_r4, uc_r4, d_r4, 1, s) for s in range(S)])
-                            horario.Add(aulas_atual <= aulas_prox)
+                            if h_r4 == 0:
+                                # Se está no 1º tempo, a continuação DEVE ser no tempo 1 NA MESMA SALA s
+                                aula_prox = X(turma_r4, uc_r4, d_r4, 1, s)
+                                horario.Add(aula_atual <= aula_prox)
 
-                        elif h_r4 == H - 1:
-                            # Se é o último slot, exige aula em h=H-2
-                            aulas_ant = sum([X(turma_r4, uc_r4, d_r4, H - 2, s) for s in range(S)])
-                            horario.Add(aulas_atual <= aulas_ant)
+                            elif h_r4 == H - 1:
+                                # Se está no último tempo, o início DEVE ser no tempo H-2 NA MESMA SALA s
+                                aula_ant = X(turma_r4, uc_r4, d_r4, H - 2, s)
+                                horario.Add(aula_atual <= aula_ant)
 
-                        else:
-                            # Slot intermédio: exige aula em h-1 OU h+1
-                            aulas_ant = sum([X(turma_r4, uc_r4, d_r4, h_r4 - 1, s) for s in range(S)])
-                            aulas_prox = sum([X(turma_r4, uc_r4, d_r4, h_r4 + 1, s) for s in range(S)])
-                            horario.Add(aulas_atual <= aulas_ant + aulas_prox)
+                            else:
+                                # Tempo intermédio: exige que a mesma sala s seja usada em h-1 OU h+1
+                                aula_ant = X(turma_r4, uc_r4, d_r4, h_r4 - 1, s)
+                                aula_prox = X(turma_r4, uc_r4, d_r4, h_r4 + 1, s)
+                                horario.Add(aula_atual <= aula_ant + aula_prox)
 
-                    # 2. Impedir blocos com mais de 2 tempos no mesmo dia (opcional, se cada bloco for max 2h)
-                    total_horas_dia = sum([X(turma_r4, uc_r4, d_r4, h, s) for h in range(H) for s in range(S)])
+                    # 2. Limite de 2 horas no dia (considerando todas as salas)
+                    total_horas_dia = sum([
+                        X(turma_r4, uc_r4, d_r4, h, s) 
+                        for h in range(H) 
+                        for s in range(S)
+                    ])
                     horario.Add(total_horas_dia <= 2)
     return
 
