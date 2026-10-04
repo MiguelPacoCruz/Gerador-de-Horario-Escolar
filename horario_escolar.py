@@ -44,11 +44,14 @@ def _():
 
     path = "dados/"
     path2 = "dados_v2/"
+    path3 = "dados_v3/"
 
-    disciplinas = pd.read_csv(path+"disciplinas.csv")
-    excecoes = pd.read_csv(path+"disponibilidade_excecoes.csv")
-    salas = pd.read_csv(path+"salas.csv")
-    turmas = pd.read_csv(path+"turmas.csv")
+    arg = path3
+
+    disciplinas = pd.read_csv(arg+"disciplinas.csv")
+    excecoes = pd.read_csv(arg+"disponibilidade_excecoes.csv")
+    salas = pd.read_csv(arg+"salas.csv")
+    turmas = pd.read_csv(arg+"turmas.csv")
     return disciplinas, excecoes, pd, salas, turmas
 
 
@@ -65,7 +68,7 @@ def _():
 
 @app.cell
 def _(disciplinas, salas, turmas):
-    S = len(salas)#salas.loc[salas["tipo"] == "normal", "quantidade"].sum()
+    S = sum(salas.loc[:,"quantidade"])
     P = disciplinas.loc[:,"professor"].nunique()
     T = len(turmas)
     return S, T
@@ -87,7 +90,7 @@ def _(excecoes):
 @app.cell
 def _(disciplinas):
     CS = []
-    lUC = len(disciplinas)
+    lUC = disciplinas.loc[:,"disciplina"].nunique()
     for i in range(lUC):
         CS.append(int(disciplinas.loc[i,"carga_semanal"]))
 
@@ -102,15 +105,74 @@ def _(disciplinas):
 
 
 @app.cell
+def _(salas):
+    # Dá map do tipo da sala (por index) ao número da sala
+    salaNum = {}
+    counter = 0
+
+    for i4 in range(len(salas)):
+        if i4 not in salaNum:
+            salaNum[i4] = []
+
+        quantidade = salas.loc[i4,"quantidade"]
+
+        for k3 in range(quantidade):
+            salaNum[i4].append(counter)
+            counter += 1
+
+    return (salaNum,)
+
+
+@app.cell
 def _(disciplinas, lUC, pd, salas):
-    Se = {}
+    tipoSala = {}
     for i2 in range(lUC):
         se = disciplinas.loc[i2,"sala_especial"]
         if pd.isna(se):
-            Se[i2] = 0#salas.index[pd.isna(salas["sala"])][0]
+            tipoSala[i2] = 0#salas.index[pd.isna(salas["sala"])][0]
         else:
-            Se[i2]= salas.index[salas["sala"] == se][0]
-    return (Se,)
+            tipoSala[i2]= salas.index[salas["sala"] == se][0]
+    return (tipoSala,)
+
+
+@app.cell
+def _(salaNum, tipoSala):
+    print(salaNum)
+    print(tipoSala)
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ### Professores por disciplina
+    """)
+    return
+
+
+@app.cell
+def _(disciplinas):
+    profporUcs = {}
+    for i3 in range(len(disciplinas)):
+        uc_p = disciplinas.loc[i3,"disciplina"]
+        if uc_p not in profporUcs:
+            profporUcs[uc_p] = []
+        profporUcs[uc_p].append(disciplinas.loc[i3,"professor"])
+
+    print(profporUcs)
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    A alterar na matriz: salas - de tipo para tipo e numero
+        - (tipo,numero) Ex: (0,3), (1,0)
+        - numero, [0-12] 0-8 normal, 9-10, laboratorio, 11-12 ginasio (X)
+
+    Adicionar professor para que possamos ter mais que 1 professor por disciplina
+    """)
+    return
 
 
 @app.cell
@@ -279,24 +341,29 @@ def _(mo):
 
 
 @app.cell
-def _(D, H, S, Se, T, X, horario, lUC, salas):
+def _(salaNum, tipoSala):
+    print(tipoSala)
+    print(salaNum)
+    return
+
+
+@app.cell
+def _(D, H, S, T, X, horario, lUC, salaNum, tipoSala):
     # 1. Garantir que a UC só usa o tipo de sala permitido
     for t1_r7 in range(T):
         for uc1_r7 in range(lUC):
-            sala_exigida = Se[uc1_r7]
+            sala_exigida = tipoSala[uc1_r7]
             for d1_r7 in range(D):
                 for h1_r7 in range(H):
                     for s1_r7 in range(S):
-                        if s1_r7 != sala_exigida:
+                        if s1_r7 not in salaNum[sala_exigida]:
                             horario.Add(X(t1_r7, uc1_r7, d1_r7, h1_r7, s1_r7) == 0)
 
-    # 2. Capacidade máxima global do tipo de sala em simultâneo
+    # 2. Apenas 1 aula por sala em simultâneo
     for d2_r7 in range(D):
         for h2_r7 in range(H):
             for s2_r7 in range(S):
-                capacidade_sala = int(salas.loc[s2_r7, "quantidade"])
-                # Soma todas as turmas e todas as UCs que possam estar a usar o tipo de sala 's'
-                horario.Add(sum([X(t2_r7, uc2_r7, d2_r7, h2_r7, s2_r7) for t2_r7 in range(T) for uc2_r7 in range(lUC)]) <= capacidade_sala)
+                horario.Add(sum([X(t2_r7, uc2_r7, d2_r7, h2_r7, s2_r7) for t2_r7 in range(T) for uc2_r7 in range(lUC)]) <= 1)
     return
 
 
@@ -317,38 +384,54 @@ def _(mo):
 
 
 @app.cell
-def _(horario, pywraplp):
-    status = horario.Solve()
+def _(pywraplp):
+    def obter_solucao(horario, X, turmas, disciplinas, salas, T, lUC, D, H, S):
+        status = horario.Solve()
 
-    if status == pywraplp.Solver.OPTIMAL:
-        print("Solução ótima encontrada!")
-    elif status == pywraplp.Solver.FEASIBLE:
-        print("Foi encontrada uma solução viável.")
-    else:
-        print("Não foi encontrada nenhuma solução.")
-    return
+        if status == pywraplp.Solver.OPTIMAL:
+            print("Solução ótima encontrada!")
+        elif status == pywraplp.Solver.FEASIBLE:
+            print("Foi encontrada uma solução viável.")
+        else:
+            print("Não foi encontrada nenhuma solução.")
+            return []
+
+        solucao = []
+
+        for t in range(T):
+            for uc in range(lUC):
+                for d in range(D):
+                    for h in range(H):
+                        for s in range(S):
+                            if X(t, uc, d, h, s).solution_value() == 1:
+                                solucao.append({
+                                    "turma": turmas.loc[t, "turma"],
+                                    "disciplina": disciplinas.loc[uc, "disciplina"],
+                                    "professor": disciplinas.loc[uc, "professor"],
+                                    "dia": d,
+                                    "hora": h,
+                                    "sala": s,
+                                })
+
+        return solucao
+
+    return (obter_solucao,)
 
 
 @app.cell
-def _(D, H, S, T, X, disciplinas, lUC, salas, turmas):
-    solucao = []
-
-    for t in range(T):
-        for uc in range(lUC):
-            for d in range(D):
-                for h in range(H):
-                    for s in range(S):
-                        if X(t, uc, d, h, s).solution_value() == 1:
-                            solucao.append({
-                                "turma": turmas.loc[t,"turma"],
-                                "disciplina": disciplinas.loc[uc,"disciplina"],
-                                "professor": disciplinas.loc[uc,"professor"],
-                                "dia": d,
-                                "hora": h,
-                                "sala": salas.loc[s,"sala"]
-                            })
-
-    print(solucao)
+def _(D, H, S, T, X, disciplinas, horario, lUC, obter_solucao, salas, turmas):
+    solucao = obter_solucao(
+        horario,
+        X,
+        turmas,
+        disciplinas,
+        salas,
+        T,
+        lUC,
+        D,
+        H,
+        S,
+    )
     return (solucao,)
 
 
@@ -361,81 +444,175 @@ def _(mo):
 
 
 @app.cell
-def _(pd, solucao):
-    horario_df = pd.DataFrame(solucao).sort_values(["dia", "hora"]).reset_index(drop=True)
-    return (horario_df,)
+def _(mo, pd):
+    def preparar_horario(solucao):
+        return (
+            pd.DataFrame(solucao)
+            .sort_values(["dia", "hora"])
+            .reset_index(drop=True)
+        )
 
 
-@app.cell
-def _(horario_df, mo):
-    lista_turmas = sorted(horario_df["turma"].unique())
-    lista_professores = sorted(horario_df["professor"].unique())
-
-    turmaUi = mo.ui.dropdown(
-        options=lista_turmas,
-        value=lista_turmas[0],
-        label="Turma",
-    )
-
-    professorUi = mo.ui.dropdown(
-        options=lista_professores,
-        value=lista_professores[0],
-        label="Professor",
-    )
-    return professorUi, turmaUi
+    def obter_turmas(horario_df):
+        return sorted(horario_df["turma"].unique())
 
 
-@app.cell
-def _(D, H):
-    dias_nomes = ["Segunda", "Terça", "Quarta", "Quinta", "Sexta"]   # ajusta a D
-    horas_nomes = [f"{8 + h}:00" for h in range(H)]                  # ajusta ao teu horário real
+    def obter_professores(horario_df):
+        return sorted(horario_df["professor"].unique())
 
-    def grelha(df, texto):
+
+    def criar_dropdown(opcoes, label):
+        return mo.ui.dropdown(
+            options=opcoes,
+            value=opcoes[0],
+            label=label,
+        )
+
+
+    def criar_grelha(df, texto, D, H, dias_nomes, horas_nomes):
         df = df.copy()
         df["celula"] = df.apply(texto, axis=1)
 
-        g = df.pivot_table(
+        grelha = df.pivot_table(
             index="hora",
             columns="dia",
             values="celula",
-            aggfunc=lambda x: " / ".join(x),   # se houver choque, aparecem as duas aulas
+            aggfunc=lambda x: " / ".join(x),
         )
 
-        # garante todas as horas e todos os dias, mesmo vazios
-        g = g.reindex(index=range(H), columns=range(D)).fillna("")
-        g.index = horas_nomes
-        g.columns = dias_nomes
-        g.index.name = "Hora"
-        return g.reset_index()
+        grelha = (
+            grelha
+            .reindex(index=range(H), columns=range(D))
+            .fillna("")
+        )
 
-    return (grelha,)
+        grelha.index = horas_nomes
+        grelha.columns = dias_nomes
+        grelha.index.name = "Hora"
+
+        return grelha.reset_index()
 
 
-@app.cell
-def _(H, grelha, horario_df, mo, professorUi, turmaUi):
-    grelha_turma_df = grelha(
-        horario_df[horario_df["turma"] == turmaUi.value],
-        lambda r: f"{r['disciplina']} ({r['sala']}) - {r['professor']}",
+    def criar_grelha_turma(horario_df, turma, D, H, dias_nomes, horas_nomes):
+        df = horario_df[horario_df["turma"] == turma]
+
+        return criar_grelha(
+            df,
+            lambda r: f"{r['disciplina']} ({r['sala']}) - {r['professor']}",
+            D,
+            H,
+            dias_nomes,
+            horas_nomes,
+        )
+
+
+    def criar_grelha_professor(horario_df, professor, D, H, dias_nomes, horas_nomes):
+        df = horario_df[horario_df["professor"] == professor]
+
+        return criar_grelha(
+            df,
+            lambda r: f"{r['disciplina']} ({r['sala']}) - {r['turma']}",
+            D,
+            H,
+            dias_nomes,
+            horas_nomes,
+        )
+
+
+    def criar_tabela(grelha_df, H):
+        return mo.ui.table(
+            grelha_df,
+            selection=None,
+            page_size=H,
+        )
+
+    return (
+        criar_grelha_professor,
+        criar_grelha_turma,
+        criar_tabela,
+        obter_professores,
+        obter_turmas,
+        preparar_horario,
     )
 
-    grelha_professor_df = grelha(
-        horario_df[horario_df["professor"] == professorUi.value],
-        lambda r: f"{r['disciplina']} ({r['sala']}) - {r['turma']}",
-    )
 
-    tabela_turma = mo.ui.table(grelha_turma_df, selection=None, page_size=H)
-    tabela_professor = mo.ui.table(grelha_professor_df, selection=None, page_size=H)
-    return tabela_professor, tabela_turma
+@app.cell(hide_code=True)
+def _(mo, obter_professores, obter_turmas, preparar_horario, solucao):
+    # Cell 1
+    if solucao:
+        horario_df = preparar_horario(solucao)
+        lista_turmas = obter_turmas(horario_df)
+        lista_professores = obter_professores(horario_df)
+
+        default_turma = lista_turmas[0] if lista_turmas else None
+        default_prof = lista_professores[0] if lista_professores else None
+
+        # Use mo.ui.dropdown directly
+        turmaUi = mo.ui.dropdown(options=lista_turmas, value=default_turma, label="Turma")
+        professorUi = mo.ui.dropdown(options=lista_professores, value=default_prof, label="Professor")
+    else:
+        horario_df = None
+        turmaUi = None
+        professorUi = None
+
+    # Avoid checking `if turmaUi:`, check `if turmaUi is not None:` instead
+    mo.vstack([turmaUi, professorUi]) if turmaUi is not None else mo.md("⚠️ Sem solução disponível")
+    return horario_df, professorUi, turmaUi
 
 
-@app.cell
-def _(mo, professorUi, tabela_professor, tabela_turma, turmaUi):
-    mo.vstack([
-        turmaUi,
-        tabela_turma,
-        professorUi,
-        tabela_professor,
-    ])
+@app.cell(hide_code=True)
+def _(
+    D,
+    H,
+    criar_grelha_professor,
+    criar_grelha_turma,
+    criar_tabela,
+    horario_df,
+    mo,
+    professorUi,
+    turmaUi,
+):
+    # Cell 2
+    def render_horarios():
+        # Explicitly check for None instead of truthiness
+        if horario_df is None or turmaUi is None or professorUi is None:
+            return mo.md("A aguardar solução...")
+    
+        if turmaUi.value is None or professorUi.value is None:
+            return mo.md("Selecione uma turma e um professor.")
+
+        dias_nomes = ["Segunda", "Terça", "Quarta", "Quinta", "Sexta"]
+        horas_nomes = [f"{8 + h}:00" for h in range(H)]
+
+        grelha_turma_df = criar_grelha_turma(
+            horario_df,
+            turmaUi.value,
+            D,
+            H,
+            dias_nomes,
+            horas_nomes,
+        )
+
+        grelha_professor_df = criar_grelha_professor(
+            horario_df,
+            professorUi.value,
+            D,
+            H,
+            dias_nomes,
+            horas_nomes,
+        )
+
+        tabela_turma = criar_tabela(grelha_turma_df, H)
+        tabela_professor = criar_tabela(grelha_professor_df, H)
+
+        return mo.vstack([
+            mo.md("### Horário da Turma"),
+            tabela_turma,
+            mo.md("### Horário do Professor"),
+            tabela_professor,
+        ])
+
+    render_horarios()
     return
 
 
