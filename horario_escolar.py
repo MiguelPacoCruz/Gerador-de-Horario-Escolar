@@ -36,7 +36,7 @@ def _():
 
     horario = pywraplp.Solver.CreateSolver('SCIP')
 
-    H = 6 # Horas
+    H = 5 # Horas (5 tempos por dia, como no enunciado)
     D = 5 # Dias
     return D, H, horario, pywraplp
 
@@ -49,7 +49,7 @@ def _():
     path2 = "dados_v2/"
     path3 = "dados_v3/"
 
-    arg = path3
+    arg = path
 
     disciplinas = pd.read_csv(arg+"disciplinas.csv")
     excecoes = pd.read_csv(arg+"disponibilidade_excecoes.csv")
@@ -76,7 +76,7 @@ def _(excecoes, professores):
         p_exc = professores.index(excecoes.loc[k,"professor"])
         if p_exc not in exc:
             exc[p_exc] = []
-        exc[p_exc].append((dM[excecoes.loc[k,"dia"]],int(excecoes.loc[k,"periodo"])))
+        exc[p_exc].append((dM[excecoes.loc[k,"dia"]],int(excecoes.loc[k,"periodo"])-1))  # no CSV o periodo é 1..5
 
     print(exc)
     return (exc,)
@@ -290,9 +290,11 @@ def _(mo):
     mo.md(r"""
     ## R4. Disciplinas marcadas duplo_periodo=sim só podem ser dadas em blocos de 2 tempos consecutivos, no mesmo dia (nunca um tempo isolado).
 
-    Os blocos são os pares de tempos $(0,1),(2,3),(4,5)$, e os dois tempos do bloco têm de ter o mesmo valor (ambos 1 ou ambos 0), com o mesmo professor e a mesma sala:
+    Cada tempo ocupado tem de ter um vizinho imediato (antes ou depois) com o mesmo professor e a mesma sala, com $x_{t,u,p,d,-1,s}=x_{t,u,p,d,H,s}=0$:
 
-    $$\forall_{t<T}\cdot\forall_{u:\,\mathit{dup}_u=1}\cdot\forall_{p<P}\cdot\forall_{d<D}\cdot\forall_{s<S}\cdot\forall_{b<H/2}\cdot \quad x_{t,u,p,d,2b,s}=x_{t,u,p,d,2b+1,s}$$
+    $$\forall_{t<T}\cdot\forall_{u:\,\mathit{dup}_u=1}\cdot\forall_{p<P}\cdot\forall_{d<D}\cdot\forall_{s<S}\cdot\forall_{h<H}\cdot \quad x_{t,u,p,d,h,s}\leq x_{t,u,p,d,h-1,s}+x_{t,u,p,d,h+1,s}$$
+
+    Juntamente com a R3 (no máximo $2$ tempos por dia nestas disciplinas), isto obriga a um único bloco de exatamente 2 tempos consecutivos.
     """)
     return
 
@@ -300,25 +302,17 @@ def _(mo):
 @app.cell
 def _(D, H, P, S, T, X, disciplinas, horario, lUC):
     for turma_r4 in range(T):
-            for uc_r4 in range(lUC):
-                if disciplinas.loc[uc_r4, "duplo_periodo"] == "sim":
-                    for prof_r4 in range(P):
-                        for d_r4 in range(D):
-                            for s_r4 in range(S):
-                                # Exemplo para H=6: pares (0,1), (2,3), (4,5)
-                                for h in range(0, H - 1, 2):
-                                    # As duas horas do bloco devem ser iguais (ambas 1 ou ambas 0)
-                                    horario.Add(
-                                        X(turma_r4, uc_r4, prof_r4, d_r4, h, s_r4)
-                                        == X(
-                                            turma_r4,
-                                            uc_r4,
-                                            prof_r4,
-                                            d_r4,
-                                            h + 1,
-                                            s_r4,
-                                        )
-                                    )
+        for uc_r4 in range(lUC):
+            if disciplinas.loc[uc_r4, "duplo_periodo"] == "sim":
+                for prof_r4 in range(P):
+                    for d_r4 in range(D):
+                        for s_r4 in range(S):
+                            for h_r4 in range(H):
+                                # cada tempo ocupado tem de ter um vizinho (antes ou depois) com o mesmo professor e sala.
+                                # Com R3 (no máximo 2 tempos por dia) isto obriga a um bloco de exatamente 2 tempos consecutivos.
+                                antes_r4 = X(turma_r4, uc_r4, prof_r4, d_r4, h_r4 - 1, s_r4) if h_r4 > 0 else 0
+                                depois_r4 = X(turma_r4, uc_r4, prof_r4, d_r4, h_r4 + 1, s_r4) if h_r4 < H - 1 else 0
+                                horario.Add(X(turma_r4, uc_r4, prof_r4, d_r4, h_r4, s_r4) <= antes_r4 + depois_r4)
     return
 
 
