@@ -14,10 +14,22 @@ def _():
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    Pretendemos gerar o horário semanal de uma escola, dadas as turmas, discplinas com o professor atribuido, carga, se é aula dupla (duplo_periodo) e necessidade de sala_especial. O tipo e quantidade
-    de salas, e as exceções de disponibilidade dos professores.
+    # Geração do horário semanal de uma escola
 
-    Vamos abordar isto com programação inteira, usando o solver usado na aula para a ficha 3.
+    **Problema.** Dadas as turmas, as disciplinas (com professor, carga semanal, indicação de duplo período e
+    necessidade de sala especial), o tipo e a quantidade de salas e as exceções de disponibilidade dos professores,
+    pretende-se gerar o horário semanal ($D=5$ dias, $H=5$ tempos por dia) que respeite as restrições do enunciado
+    (R0–R7) e minimize os "buracos" nos horários dos professores (O1).
+
+    **Abordagem.** Programação linear inteira (0/1), modelada com `pywraplp` do OR-Tools e resolvida com o SCIP, o
+    mesmo solver usado na ficha 3.
+
+    **Estrutura do relatório.**
+    1. Decisões de implementação
+    2. Modelação (variáveis, restrições, objetivo)
+    3. Resolução e visualização
+    4. Validação automática (R0–R7)
+    5. Âmbito e limitações
     """)
     return
 
@@ -25,7 +37,37 @@ def _(mo):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    As constantes, ao contrário da ficha 3, não estarão todas "hardcoded", pois algumas são afetadas pelo input.
+    ## 1. Decisões de implementação
+
+    ### 1.1 Técnica e biblioteca de modelação
+
+    Escolhemos **programação inteira 0/1 com `pywraplp` + SCIP** em vez do CP-SAT sugerido. Razões:
+
+    - **Natureza do problema.** Quase todas as restrições são somas de variáveis binárias com `≤`, `=` ou `≥` (R1, R2, R3,
+      R5, R6, R7). Isto é uma forma linear natural, sem necessidade de restrições globais.
+    - **Objetivo linear.** O número de buracos exprime-se linearmente com as variáveis auxiliares
+      $\mathit{pre}$, $\mathit{pos}$ e $\mathit{ent}$ (ver O1).
+    - **Continuidade com a ficha 3.** Reutilizamos a API e a forma de modelar já trabalhadas nas aulas, o que reduz o risco de
+      erros de modelação.
+    - **Custo desta escolha.** O CP-SAT costuma escalar melhor em problemas de escalonamento com muitas restrições
+      combinatórias, pelo que esta escolha pode ser um limite em instâncias maiores.
+
+    ### 1.2 Leitura e estrutura dos dados
+
+    Usamos `pandas` para ler os CSV. Justificação: os ficheiros são pequenos e tabulares, e `pandas` trata de tipos e valores
+    em falta (por exemplo `sala_especial` vazia significa sala normal) com pouco código. Os dados são convertidos para
+    **índices inteiros** (`professores`, `ucs`, `salaNum`, `tipoSala`, `exc`, `profporUcs`), porque o modelo indexa
+    variáveis por posições e a conversão feita uma única vez simplifica todas as restrições.
+
+    $T$, $U$, $P$ e $S$ vêm do tamanho dos CSV. Só $D$ e $H$ são constantes, porque fazem parte do enunciado (semana de
+    5 dias com 5 tempos). A pasta de dados é escolhida pela variável `arg`.
+
+    ### 1.3 Representação do resultado
+
+    A solução é uma lista de aulas `{turma, disciplina, professor, dia, hora, sala}`, convertida num `DataFrame`.
+    A partir dela são geradas **grelhas semanais** (tempo × dia) por turma e por professor, apresentadas em `mo.ui.table`
+    com `mo.ui.dropdown` para escolher a turma ou o professor. Uma grelha por entidade é a forma mais próxima de um horário
+    real e permite inspecionar visualmente conflitos e buracos.
     """)
     return
 
@@ -76,7 +118,7 @@ def _(excecoes, professores):
         p_exc = professores.index(excecoes.loc[k,"professor"])
         if p_exc not in exc:
             exc[p_exc] = []
-        exc[p_exc].append((dM[excecoes.loc[k,"dia"]],int(excecoes.loc[k,"periodo"])-1))  # no CSV o periodo é 1..5
+        exc[p_exc].append((dM[excecoes.loc[k,"dia"]],int(excecoes.loc[k,"periodo"])-1))
     return (exc,)
 
 
@@ -141,32 +183,36 @@ def _(disciplinas, lUC, pd, salas):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    A alterar na matriz: salas - de tipo para tipo e numero
-        - (tipo,numero) Ex: (0,3), (1,0)
-        - numero, [0-12] 0-8 normal, 9-10, laboratorio, 11-12 ginasio (X)
+    ## 2. Modelação
 
-    Adicionar professor para que possamos ter mais que 1 professor por disciplina
-    """)
-    return
+    **Índices:** turmas $t<T$, disciplinas $u<U$, professores $p<P$, dias $d<D$, horas $h<H$, salas $s<S$.
 
+    **Parâmetros (vêm dos CSV):**
 
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    ## Modelação
+    - $c_u$: carga semanal da disciplina $u$ (`carga_semanal`)
+    - $\mathit{dup}_u\in\{0,1\}$: a disciplina $u$ é de duplo período (`duplo_periodo`)
+    - $\mathit{Prof}_u$: conjunto de professores que podem lecionar $u$ (`profporUcs`)
+    - $\mathit{Sal}_u$: conjunto de salas que $u$ pode usar (`salaNum[tipoSala[u]]`)
+    - $\mathit{Exc}\subseteq P\times D\times H$: tempos em que um professor está indisponível (`exc`)
 
-    Índices: turmas $t<T$, disciplinas $u<U$, professores $p<P$, dias $d<D$, horas $h<H$, salas $s<S$.
+    **Variável de decisão:**
 
-    Parâmetros (vêm dos CSV): $c_u$ é a carga semanal da disciplina $u$ (`carga_semanal`); $\mathit{dup}_u\in\{0,1\}$ indica se é de duplo período;
-    $\mathit{Prof}_u$ é o conjunto de professores da disciplina $u$ (`profporUcs`); $\mathit{Sal}_u$ é o conjunto de salas que $u$ pode usar (`salaNum[tipoSala[u]]`);
-    $\mathit{Exc}\subseteq P\times D\times H$ são os tempos em que um professor está indisponível (`exc`).
+    $$x_{t,u,p,d,h,s}=1 \iff \text{a turma } t \text{ tem a disciplina } u \text{ com o professor } p \text{, no dia } d\text{, à hora } h\text{, na sala } s.$$
 
-    Variáveis:
+    O professor $p$ faz parte do índice para permitir **vários professores por disciplina**. A escolha de qual leciona cada
+    turma fica a cargo do solver, condicionada por R0.
 
-    $$x_{t,u,p,d,h,s}=1 \quad \mbox{se e só se} \quad \mbox{a turma $t$ tem a disciplina $u$ com o professor $p$, no dia $d$, à hora $h$, na sala $s$.}$$
+    **Classificação das restrições:**
 
-    Classificação das restrições: R0, R6 e R7 (tipo de sala) são *proibições* (fixam variáveis a 0); R1, R3, R5 e R7 (uma aula por sala) são *limitações* (máximos);
-    R2 é uma *obrigação* (mínimo/igualdade); R4 liga variáveis entre si.
+    | Tipo | Restrições | Efeito |
+    |---|---|---|
+    | Proibição | R0, R6, R7 (tipo de sala) | fixam variáveis a 0 |
+    | Limitação | R1, R3, R5, R7 (uma aula por sala) | somas com máximo |
+    | Obrigação | R2 | igualdade com a carga |
+    | Ligação | R4 | liga variáveis vizinhas entre si |
+
+    **Dimensão do modelo.** Há $T\cdot U\cdot P\cdot D\cdot H\cdot S$ variáveis binárias. É uma formulação densa, simples
+    de escrever e de ler, mas que cresce rapidamente com $T$, $P$ e $S$.
     """)
     return
 
@@ -298,8 +344,6 @@ def _(D, H, P, S, T, X, disciplinas, horario, lUC):
                     for d_r4 in range(D):
                         for s_r4 in range(S):
                             for h_r4 in range(H):
-                                # cada tempo ocupado tem de ter um vizinho (antes ou depois) com o mesmo professor e sala.
-                                # Com R3 (no máximo 2 tempos por dia) isto obriga a um bloco de exatamente 2 tempos consecutivos.
                                 antes_r4 = X(turma_r4, uc_r4, prof_r4, d_r4, h_r4 - 1, s_r4) if h_r4 > 0 else 0
                                 depois_r4 = X(turma_r4, uc_r4, prof_r4, d_r4, h_r4 + 1, s_r4) if h_r4 < H - 1 else 0
                                 horario.Add(X(turma_r4, uc_r4, prof_r4, d_r4, h_r4, s_r4) <= antes_r4 + depois_r4)
@@ -445,7 +489,9 @@ def _(D, H, P, S, T, X, horario, lUC, profporUcs):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    # Correr o solver
+    ## 3. Resolução e visualização
+
+    ### Correr o solver
     """)
     return
 
@@ -497,7 +543,7 @@ def _(D, H, P, S, T, X, horario, lUC, obter_solucao, turmas, ucs):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ## Representação dos dados
+    ### Representação dos dados
     """)
     return
 
@@ -672,6 +718,290 @@ def _(
         ])
 
     render_horarios()
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## 4. Validação automática (R0–R7)
+
+    A função `verificar_horario` recebe **apenas** o horário gerado (a lista `solucao`) e os CSV, e recalcula cada
+    restrição diretamente sobre as aulas. Não usa o modelo, o solver nem as estruturas de índices construídas para ele
+    (`x`, `profporUcs`, `ucsporProf`, `tipoSala`). Assim, um erro de modelação, como um índice trocado numa restrição,
+    não é escondido por um erro igual na verificação: o solver gera um horário que obedece à restrição errada e o
+    verificador, que a calcula de outra forma, assinala-o. Devolve a lista de violações (vazia = horário válido).
+
+    | Restrição | O que se verifica sobre as aulas |
+    |---|---|
+    | R0 | o professor de cada aula leciona essa disciplina (segundo `disciplinas.csv`) |
+    | R1 | não há duas aulas com o mesmo (turma, dia, hora) |
+    | R2 | para cada (turma, disciplina), o número de aulas é igual à carga semanal |
+    | R3 | por (turma, disciplina, dia), no máximo 1 aula (2 se duplo período) |
+    | R4 | em duplo período, as aulas do dia são exatamente 2, em horas consecutivas, com o mesmo professor e sala |
+    | R5 | não há duas aulas com o mesmo (professor, dia, hora) |
+    | R6 | nenhuma aula cai num (professor, dia, hora) de `disponibilidade_excecoes.csv` |
+    | R7 | a sala é do tipo exigido pela disciplina e não há duas aulas com o mesmo (sala, dia, hora) |
+
+    Tal como o modelo, o R2 assume que todas as turmas têm todas as disciplinas.
+
+    **Teste negativo.** Um verificador que devolve sempre "tudo certo" também passaria o teste anterior. Por isso,
+    `executar_testes_negativos` pega no horário gerado e estraga-o de propósito, uma restrição de cada vez (por exemplo,
+    move uma aula para um tempo de exceção do professor), e confirma que o verificador deteta essa violação.
+    Isto cobre pelo menos um caso de cada restrição.
+
+    **Utilização de IA.** Para esta secção pedimos ao Gemini que escrevesse a verificação automática; a conversa está
+    disponível [aqui](https://share.gemini.google/4cMuScoSsr3l). Limitámo-nos a inspirar-nos na solução proposta e alterámo-la de acordo com o
+    que pretendíamos para este trabalho.
+    """)
+    return
+
+
+@app.cell
+def _(pd):
+    def construir_contexto(disciplinas, excecoes, salas):
+        """Reconstrói, só a partir dos CSV, tudo o que é preciso para verificar um horário.
+        Não usa nenhuma estrutura do modelo (x, profporUcs, ucsporProf, tipoSala, ...)."""
+        dias = {"Seg": 0, "Ter": 1, "Qua": 2, "Qui": 3, "Sex": 4}
+
+        # uma linha por disciplina (a primeira), como no resto do notebook
+        primeira = disciplinas.drop_duplicates("disciplina").set_index("disciplina")
+
+        # salas: a sala global s pertence à linha de salas.csv cujo intervalo a contém
+        intervalos, n = [], 0
+        for q in salas["quantidade"]:
+            intervalos.append(set(range(n, n + int(q))))
+            n += int(q)
+
+        linha_normal = salas.index[salas["tipo"] == "normal"][0]
+        sala_exigida = {}
+        for disc, se in primeira["sala_especial"].items():
+            linha = linha_normal if pd.isna(se) else salas.index[salas["sala"] == se][0]
+            sala_exigida[disc] = intervalos[linha]
+
+        return {
+            "profs_da_disc": disciplinas.groupby("disciplina")["professor"].apply(set).to_dict(),
+            "carga": primeira["carga_semanal"].astype(int).to_dict(),
+            "duplo": (primeira["duplo_periodo"] == "sim").to_dict(),
+            "excecoes": {(r.professor, dias[r.dia], int(r.periodo) - 1) for r in excecoes.itertuples()},
+            "sala_exigida": sala_exigida,
+            "n_salas": n,
+        }
+
+
+    def verificar_horario(solucao, disciplinas, turmas, excecoes, salas):
+        """Devolve a lista de violações de R0–R7 (lista vazia = horário válido).
+        Cada aula é um dict com: turma, disciplina, professor, dia, hora, sala."""
+        from collections import Counter, defaultdict
+
+        ctx = construir_contexto(disciplinas, excecoes, salas)
+        viol = []
+
+        # R0: o professor leciona a disciplina
+        for a in solucao:
+            if a["professor"] not in ctx["profs_da_disc"].get(a["disciplina"], set()):
+                viol.append(f"R0: {a['professor']} não leciona {a['disciplina']}")
+
+        # R1: uma turma não tem duas aulas em simultâneo
+        for (t, d, h), n in Counter((a["turma"], a["dia"], a["hora"]) for a in solucao).items():
+            if n > 1:
+                viol.append(f"R1: turma {t} tem {n} aulas no dia {d}, hora {h}")
+
+        # R2: cada disciplina cumpre a carga semanal, para cada turma
+        contagem = Counter((a["turma"], a["disciplina"]) for a in solucao)
+        for t in turmas["turma"]:
+            for disc, carga in ctx["carga"].items():
+                if contagem[(t, disc)] != carga:
+                    viol.append(f"R2: turma {t}, {disc}: {contagem[(t, disc)]} aulas (carga {carga})")
+
+        # R3 e R4: agrupar as aulas por (turma, disciplina, dia)
+        por_dia = defaultdict(list)
+        for a in solucao:
+            por_dia[(a["turma"], a["disciplina"], a["dia"])].append(a)
+
+        for (t, disc, d), aulas in por_dia.items():
+            duplo = ctx["duplo"].get(disc, False)
+
+            # R3: no máximo 1 aula por dia (2 se duplo período)
+            if len(aulas) > (2 if duplo else 1):
+                viol.append(f"R3: turma {t}, {disc}, dia {d}: {len(aulas)} aulas")
+
+            # R4: duplo período = bloco de 2 tempos consecutivos, mesmo professor e mesma sala
+            if duplo:
+                horas = sorted(a["hora"] for a in aulas)
+                mesmo_prof = len({a["professor"] for a in aulas}) == 1
+                mesma_sala = len({a["sala"] for a in aulas}) == 1
+                if not (len(aulas) == 2 and horas[1] - horas[0] == 1 and mesmo_prof and mesma_sala):
+                    viol.append(f"R4: turma {t}, {disc}, dia {d}: não é um bloco válido de 2 tempos (horas {horas})")
+
+        # R5: um professor não dá duas aulas em simultâneo
+        for (p, d, h), n in Counter((a["professor"], a["dia"], a["hora"]) for a in solucao).items():
+            if n > 1:
+                viol.append(f"R5: {p} tem {n} aulas no dia {d}, hora {h}")
+
+        # R6: o professor só dá aulas quando está disponível
+        for a in solucao:
+            if (a["professor"], a["dia"], a["hora"]) in ctx["excecoes"]:
+                viol.append(f"R6: {a['professor']} está indisponível no dia {a['dia']}, hora {a['hora']}")
+
+        # R7: a sala é do tipo exigido e cada sala tem no máximo uma aula por tempo
+        for a in solucao:
+            if a["sala"] not in ctx["sala_exigida"].get(a["disciplina"], set()):
+                viol.append(f"R7: {a['disciplina']} (turma {a['turma']}) está na sala {a['sala']}, de tipo errado")
+        for (s, d, h), n in Counter((a["sala"], a["dia"], a["hora"]) for a in solucao).items():
+            if n > 1:
+                viol.append(f"R7: sala {s} tem {n} aulas no dia {d}, hora {h}")
+
+        return viol
+
+
+    def executar_testes_negativos(solucao, disciplinas, turmas, excecoes, salas):
+        """Estraga de propósito um horário válido, uma restrição de cada vez, e confirma que
+        o verificador deteta essa violação. Devolve uma tabela com o resultado de cada teste."""
+        ctx = construir_contexto(disciplinas, excecoes, salas)
+        todos_profs = set(disciplinas["professor"])
+        resultados = []
+
+        def testar(codigo, descricao, aulas):
+            if aulas is None:
+                resultados.append({"Restrição": codigo, "Corrupção aplicada": descricao, "Detetada": "n/a (sem caso nos dados)"})
+                return
+            viol = verificar_horario(aulas, disciplinas, turmas, excecoes, salas)
+            resultados.append({"Restrição": codigo, "Corrupção aplicada": descricao,
+                               "Detetada": any(v.startswith(codigo + ":") for v in viol)})
+
+        def copia():
+            return [dict(a) for a in solucao]
+
+        def primeira(cond):
+            return next((i for i, a in enumerate(solucao) if cond(a)), None)
+
+        # R0: trocar o professor de uma aula por outro que não leciona a disciplina
+        i = primeira(lambda a: todos_profs - ctx["profs_da_disc"][a["disciplina"]])
+        if i is None:
+            testar("R0", "professor que não leciona a disciplina", None)
+        else:
+            aulas = copia()
+            aulas[i]["professor"] = sorted(todos_profs - ctx["profs_da_disc"][aulas[i]["disciplina"]])[0]
+            testar("R0", "professor que não leciona a disciplina", aulas)
+
+        # R1: duplicar uma aula (a turma fica com duas aulas no mesmo tempo)
+        aulas = copia()
+        aulas.append(dict(aulas[0]))
+        testar("R1", "aula duplicada no mesmo tempo da mesma turma", aulas)
+
+        # R2: remover uma aula (a carga deixa de se cumprir)
+        testar("R2", "aula removida", copia()[1:])
+
+        # R3: duas aulas no mesmo dia de uma disciplina sem duplo período
+        i = primeira(lambda a: not ctx["duplo"][a["disciplina"]])
+        if i is None:
+            testar("R3", "2 aulas no mesmo dia, sem duplo período", None)
+        else:
+            aulas = copia()
+            extra = dict(aulas[i])
+            extra["hora"] = 0 if extra["hora"] != 0 else 1
+            aulas.append(extra)
+            testar("R3", "2 aulas no mesmo dia, sem duplo período", aulas)
+
+        # R4: partir um bloco de duplo período (fica um tempo isolado)
+        i = primeira(lambda a: ctx["duplo"][a["disciplina"]])
+        if i is None:
+            testar("R4", "bloco de duplo período partido", None)
+        else:
+            aulas = copia()
+            del aulas[i]
+            testar("R4", "bloco de duplo período partido", aulas)
+
+        # R5: o mesmo professor numa segunda turma, ao mesmo tempo
+        aulas = copia()
+        extra = dict(aulas[0])
+        extra["turma"] = "turma_fantasma"
+        aulas.append(extra)
+        testar("R5", "professor com duas aulas ao mesmo tempo", aulas)
+
+        # R6: mover uma aula para um tempo de exceção do professor
+        alvo = next(((p, d, h, k) for (p, d, h) in sorted(ctx["excecoes"])
+                     for k, a in enumerate(solucao) if a["professor"] == p), None)
+        if alvo is None:
+            testar("R6", "aula num tempo de exceção do professor", None)
+        else:
+            p, d, h, k = alvo
+            aulas = copia()
+            aulas[k]["dia"], aulas[k]["hora"] = d, h
+            testar("R6", "aula num tempo de exceção do professor", aulas)
+
+        # R7: pôr uma aula numa sala de tipo errado
+        i = primeira(lambda a: len(ctx["sala_exigida"][a["disciplina"]]) < ctx["n_salas"])
+        if i is None:
+            testar("R7", "sala de tipo errado", None)
+        else:
+            aulas = copia()
+            errada = next(s for s in range(ctx["n_salas"]) if s not in ctx["sala_exigida"][aulas[i]["disciplina"]])
+            aulas[i]["sala"] = errada
+            testar("R7", "sala de tipo errado", aulas)
+
+        return pd.DataFrame(resultados)
+
+    return executar_testes_negativos, verificar_horario
+
+
+@app.cell
+def _(disciplinas, excecoes, mo, salas, solucao, turmas, verificar_horario):
+    # Verificação do horário gerado
+    if not solucao:
+        _out = mo.md("Sem solução para verificar.")
+    else:
+        _viol = verificar_horario(solucao, disciplinas, turmas, excecoes, salas)
+        if not _viol:
+            _out = mo.md(f"O horário cumpre R0–R7 ({len(solucao)} aulas verificadas).")
+        else:
+            _out = mo.vstack([
+                mo.md(f"{len(_viol)} violações encontradas:"),
+                mo.md("\n".join(f"- {v}" for v in _viol[:50])),
+            ])
+    _out
+    return
+
+
+@app.cell
+def _(
+    disciplinas,
+    excecoes,
+    executar_testes_negativos,
+    mo,
+    salas,
+    solucao,
+    turmas,
+):
+    # Testes negativos: cada corrupção tem de ser detetada
+    mo.stop(not solucao, mo.md("Sem solução para estragar."))
+    testes_negativos = executar_testes_negativos(solucao, disciplinas, turmas, excecoes, salas)
+    testes_negativos
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## 5. Âmbito e limitações
+
+    **O que o notebook faz.** Lê os dados, constrói o modelo com as restrições R0–R7, minimiza os buracos dos professores
+    (O1), resolve com o SCIP, apresenta o horário por turma e por professor e verifica automaticamente que o horário
+    gerado cumpre R0–R7 (com testes negativos).
+
+    **Construção incremental (R9): não implementada, por escolha.** Optámos por não a fazer devido à complexidade que
+    levanta. Exigiria, no mínimo, definir e medir o que é uma "aula alterada" entre dois horários, acrescentar ao
+    objetivo um termo de estabilidade face ao horário anterior (com um peso a calibrar contra os buracos) e comparar
+    rigorosamente o tempo com o de resolver de raiz. Preferimos concentrar o trabalho num modelo base correto e bem
+    documentado a entregar uma solução incremental incompleta.
+
+    **Outras limitações.**
+
+    - **Formulação densa.** O número de variáveis cresce com o produto de todos os índices. Criar variáveis apenas para
+      combinações permitidas ($p\in\mathit{Prof}_u$, $s\in\mathit{Sal}_u$) reduziria muito o modelo.
+    - **Solver genérico.** O SCIP serve bem para este tamanho, mas o CP-SAT poderá escalar melhor.
+    """)
     return
 
 
