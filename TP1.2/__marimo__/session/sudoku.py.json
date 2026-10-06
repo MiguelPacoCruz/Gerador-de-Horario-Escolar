@@ -1,0 +1,223 @@
+{
+  "version": "1",
+  "metadata": {
+    "marimo_version": "0.24.2",
+    "script_metadata_hash": "1d9333fb0b9884ddab1bacb6e72a2a86"
+  },
+  "cells": [
+    {
+      "id": "Hbol",
+      "code_hash": "1d0db38904205bec4d6f6f6a1f6cec3e",
+      "outputs": [],
+      "console": []
+    },
+    {
+      "id": "MJUe",
+      "code_hash": "56ed7fa60d6e5982e1f9cceb2728fd76",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "<span class=\"markdown prose dark:prose-invert contents\"><h1 id=\"sudoku-generico-como-csp\">Sudoku Gen\u00e9rico como CSP</h1>\n<span class=\"paragraph\"><strong>Unidade curricular:</strong> L\u00f3gica Computacional\n<strong>Autores:</strong> <em>Miguel do Pa\u00e7o Cruz (a108574) e Pedro Rodrigues Campos (a108482)</em></span>\n<h2 id=\"1-introducao\">1. Introdu\u00e7\u00e3o</h2>\n<span class=\"paragraph\">Neste trabalho resolvemos o Sudoku <marimo-tex class=\"arithmatex\">||(n^2 \\times n^2||)</marimo-tex> como um problema de\nsatisfa\u00e7\u00e3o de restri\u00e7\u00f5es (CSP). As regras do jogo s\u00e3o todas a mesma\nrestri\u00e7\u00e3o: um conjunto de c\u00e9lulas tem de ter valores diferentes. O que\nmuda entre uma linha, uma coluna e um bloco \u00e9 s\u00f3 quais as c\u00e9lulas do\nconjunto.</span>\n<span class=\"paragraph\">Por isso h\u00e1 uma classe \u00fanica para um grupo de c\u00e9lulas (<code>Box</code>) e o resto\n\u00e9 constru\u00eddo a partir dela: linhas e colunas (<code>Path</code>), blocos (<code>Cube</code>) e\npistas aleat\u00f3rias (outro <code>Box</code>). O modelo CSP trata todos os grupos da\nmesma maneira.</span>\n<h2 id=\"2-objetivos\">2. Objetivos</h2>\n<ul>\n<li>Representar qualquer grupo de c\u00e9lulas atrav\u00e9s de uma classe gen\u00e9rica,\n  com algumas c\u00e9lulas possivelmente fixas.</li>\n<li>Obter linhas, colunas e blocos como especializa\u00e7\u00f5es dessa classe.</li>\n<li>Gerar aleatoriamente pistas iniciais reutilizando a mesma abstra\u00e7\u00e3o.</li>\n<li>Montar o modelo completo e resolv\u00ea-lo, distinguindo claramente o caso\n  em que n\u00e3o existe solu\u00e7\u00e3o.</li>\n<li>Validar automaticamente as solu\u00e7\u00f5es e garantir que o c\u00f3digo funciona\n  para qualquer <marimo-tex class=\"arithmatex\">||(n||)</marimo-tex>, e n\u00e3o apenas para <marimo-tex class=\"arithmatex\">||(n=3||)</marimo-tex>.</li>\n</ul>\n<h2 id=\"3-correspondencia-com-o-enunciado\">3. Correspond\u00eancia com o enunciado</h2>\n<table>\n<thead>\n<tr>\n<th>Enunciado</th>\n<th>Neste notebook</th>\n</tr>\n</thead>\n<tbody>\n<tr>\n<td><code>box</code> (R1)</td>\n<td><code>Box</code></td>\n</tr>\n<tr>\n<td><code>cube</code> (R2)</td>\n<td><code>Cube</code></td>\n</tr>\n<tr>\n<td><code>path</code> (R3)</td>\n<td><code>Path</code></td>\n</tr>\n<tr>\n<td>gera\u00e7\u00e3o de pistas (R4)</td>\n<td><code>random_clues</code></td>\n</tr>\n<tr>\n<td>modelo e resolu\u00e7\u00e3o (R5)</td>\n<td><code>SudokuSolver</code> (<code>add_groups</code>, <code>solve</code>)</td>\n</tr>\n<tr>\n<td>Sudoku completo (R6)</td>\n<td><code>solve_full_sudoku</code></td>\n</tr>\n</tbody>\n</table></span>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "vblA",
+      "code_hash": "4eb97354ee70d67bc0dfca5a7f12eb9b",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "<span class=\"markdown prose dark:prose-invert contents\"><h2 id=\"4-decisoes-de-modelacao\">4. Decis\u00f5es de modela\u00e7\u00e3o</h2>\n<span class=\"paragraph\"><strong>Solver.</strong> Us\u00e1mos o CP-SAT do OR-Tools. O Sudoku \u00e9 um problema de\nsatisfa\u00e7\u00e3o com dom\u00ednios finitos e restri\u00e7\u00f5es <code>AllDifferent</code>, que o\nCP-SAT suporta diretamente, por isso o modelo fica igual ao enunciado:\numa vari\u00e1vel em <marimo-tex class=\"arithmatex\">||([1, n^2]||)</marimo-tex> por c\u00e9lula e uma restri\u00e7\u00e3o por grupo. N\u00e3o\nh\u00e1 nada para otimizar.</span>\n<span class=\"paragraph\"><strong>Pistas.</strong> O enunciado manda impor \"todos diferentes\" a cada grupo\nque o modelo recebe. Isso est\u00e1 certo para linhas, colunas e blocos, mas\nn\u00e3o para as pistas: s\u00e3o c\u00e9lulas soltas pela grelha e duas podem ter o\nmesmo valor sem problema nenhum se n\u00e3o partilharem linha, coluna ou\nbloco. Com <code>AllDifferent</code> nas pistas, puzzles sol\u00faveis davam\n\"sem solu\u00e7\u00e3o\", e com <marimo-tex class=\"arithmatex\">||(k &gt; n^2||)</marimo-tex> davam sempre. Por isso <code>add_groups</code>\ntem o par\u00e2metro <code>all_different</code> (por omiss\u00e3o <code>True</code>) e as pistas\nentram com <code>False</code>, s\u00f3 a fixar valores.</span>\n<span class=\"paragraph\"><strong>Puzzles sem solu\u00e7\u00e3o.</strong> Como as pistas s\u00e3o independentes, podem\nentrar em conflito (o mesmo valor na mesma linha, por exemplo). Quando\nisso acontece, <code>solve_full_sudoku</code> gera novas pistas, at\u00e9 um m\u00e1ximo de\n<code>max_tentativas</code>; se esgotar, devolve <code>SEM_SOLUCAO</code>. J\u00e1 <code>resolver</code>,\nque resolve umas pistas dadas, limita-se a indicar que n\u00e3o h\u00e1 solu\u00e7\u00e3o.</span>\n<span class=\"paragraph\"><strong>Estados.</strong> <code>solve</code> devolve <code>SOLUCAO</code>, <code>SEM_SOLUCAO</code> (o solver provou\nque \u00e9 imposs\u00edvel) ou <code>DESCONHECIDO</code> (por exemplo, acabou o tempo), para\nn\u00e3o confundir \"n\u00e3o existe\" com \"n\u00e3o se sabe\".</span></span>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "bkHC",
+      "code_hash": "7be5331781fd514100b0d783ae0e9f77",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "<span class=\"markdown prose dark:prose-invert contents\"><h2 id=\"5-grupos-de-celulas\">5. Grupos de c\u00e9lulas</h2>\n<h3 id=\"51-box-grupo-generico-r1\">5.1 <code>Box</code>: grupo gen\u00e9rico (R1)</h3>\n<span class=\"paragraph\">Guarda <code>(linha, coluna) \u2192 valor ou None</code>. N\u00e3o tem nada espec\u00edfico de\nlinhas, colunas ou blocos. O <code>add</code> rejeita coordenadas fora da grelha e\nvalores fora de <marimo-tex class=\"arithmatex\">||([1, n^2]||)</marimo-tex>.</span></span>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "lEQa",
+      "code_hash": "f0a58c1701fc6a4201e7f1468c51f6e1",
+      "outputs": [],
+      "console": []
+    },
+    {
+      "id": "PKri",
+      "code_hash": "6e2b690c399a89ee4c153168fa033f20",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "<span class=\"markdown prose dark:prose-invert contents\"><h3 id=\"52-cube-e-path-blocos-linhas-e-colunas-r2-r3\">5.2 <code>Cube</code> e <code>Path</code>: blocos, linhas e colunas (R2, R3)</h3>\n<span class=\"paragraph\"><code>Cube</code> \u00e9 o bloco <marimo-tex class=\"arithmatex\">||(n \\times n||)</marimo-tex> de \u00edndices <marimo-tex class=\"arithmatex\">||((b_i, b_j)||)</marimo-tex>. <code>Path</code> \u00e9 um tro\u00e7o\nreto entre <code>inicio</code> e <code>fim</code>, em qualquer sentido. Uma linha ou coluna\ninteira \u00e9 um <code>Path</code> de uma ponta \u00e0 outra da grelha.</span></span>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "Xref",
+      "code_hash": "28bf52967958e42cc36b52f62c51fe33",
+      "outputs": [],
+      "console": []
+    },
+    {
+      "id": "SFPL",
+      "code_hash": "24c2ea55edd650f62117158f2166f9f4",
+      "outputs": [],
+      "console": []
+    },
+    {
+      "id": "BYtC",
+      "code_hash": "ff8c7ea9ea546a35d5e846fe5428f3bc",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "<span class=\"markdown prose dark:prose-invert contents\"><h2 id=\"6-geracao-aleatoria-de-pistas-r4\">6. Gera\u00e7\u00e3o aleat\u00f3ria de pistas (R4)</h2>\n<span class=\"paragraph\"><code>random_clues</code> devolve um <code>Box</code> com <marimo-tex class=\"arithmatex\">||(k||)</marimo-tex> c\u00e9lulas distintas, cada uma fixa\na um valor aleat\u00f3rio em <marimo-tex class=\"arithmatex\">||([1, n^2]||)</marimo-tex>.</span></span>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "RGSE",
+      "code_hash": "030a465082d28c6bb7e1602be9ce5f44",
+      "outputs": [],
+      "console": []
+    },
+    {
+      "id": "Kclp",
+      "code_hash": "329653e5969e86c74dc7218d477ca1e2",
+      "outputs": [],
+      "console": []
+    },
+    {
+      "id": "emfo",
+      "code_hash": "b0a1d938be41e18d8bd235173400fbea",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "<span class=\"markdown prose dark:prose-invert contents\"><h2 id=\"7-modelo-csp-e-resolucao-r5-r6\">7. Modelo CSP e resolu\u00e7\u00e3o (R5, R6)</h2>\n<span class=\"paragraph\"><code>SudokuSolver</code> tem uma vari\u00e1vel por c\u00e9lula e aplica os grupos que\nrecebe. <code>resolver</code> e <code>solve_full_sudoku</code> juntam linhas, colunas, blocos e\npistas e resolvem.</span></span>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "Hstk",
+      "code_hash": "bb0d4a189b76eabae21bdaee4e1e18e7",
+      "outputs": [],
+      "console": []
+    },
+    {
+      "id": "nWHF",
+      "code_hash": "eecc569347d766ad8e9c551eb99c1c0a",
+      "outputs": [],
+      "console": []
+    },
+    {
+      "id": "iLit",
+      "code_hash": "40640853a2b4efb960ac86f81fd43506",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "<span class=\"markdown prose dark:prose-invert contents\"><h2 id=\"8-validacao-e-testes\">8. Valida\u00e7\u00e3o e testes</h2>\n<h3 id=\"81-validador\">8.1 Validador</h3>\n<span class=\"paragraph\"><code>validate_solution</code> confirma que linhas, colunas e blocos t\u00eam os valores\n<marimo-tex class=\"arithmatex\">||(1 \\ldots n^2||)</marimo-tex> e que as pistas se mant\u00eam.</span></span>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "ZHCJ",
+      "code_hash": "b145791e07a8603e44424df25d3f0e7f",
+      "outputs": [],
+      "console": []
+    },
+    {
+      "id": "ROlb",
+      "code_hash": "ca71dfbcfed48be593e1faf607c3000f",
+      "outputs": [],
+      "console": []
+    },
+    {
+      "id": "qnkX",
+      "code_hash": "5b22040515e71216946855c46cfc42bb",
+      "outputs": [],
+      "console": []
+    },
+    {
+      "id": "TqIu",
+      "code_hash": "ad66d6739bdb143110c22e95332e3403",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "<span class=\"markdown prose dark:prose-invert contents\"><h2 id=\"9-resolucao-de-um-exemplo\">9. Resolu\u00e7\u00e3o de um exemplo</h2>\n<span class=\"paragraph\">Gera-se um puzzle com pistas aleat\u00f3rias (semente fixa, para ser\nreproduz\u00edvel) e resolve-se. Esta sec\u00e7\u00e3o s\u00f3 calcula; a apresenta\u00e7\u00e3o\nfica na sec\u00e7\u00e3o seguinte.</span></span>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "Vxnm",
+      "code_hash": "9fc32af885ee5279718d9942bb575615",
+      "outputs": [],
+      "console": []
+    },
+    {
+      "id": "DnEU",
+      "code_hash": "0d73c152f1c42b5f94897b56ac735731",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "<span class=\"markdown prose dark:prose-invert contents\"><h2 id=\"10-visualizacao\">10. Visualiza\u00e7\u00e3o</h2>\n<span class=\"paragraph\">A grelha \u00e9 desenhada como tabela markdown. Os valores a <strong>negrito</strong> s\u00e3o as\npistas, <code>\u00b7</code> \u00e9 uma c\u00e9lula vazia e <code>\u2503</code> e <code>\u2501</code> separam os blocos\n<marimo-tex class=\"arithmatex\">||(n \\times n||)</marimo-tex>.</span></span>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "ulZA",
+      "code_hash": "859dff842e95abba4c5b2dd5a34618e2",
+      "outputs": [],
+      "console": []
+    },
+    {
+      "id": "ecfG",
+      "code_hash": "97471c5f8403314fd3204245d8f59452",
+      "outputs": [],
+      "console": []
+    },
+    {
+      "id": "Pvdt",
+      "code_hash": "0059dd5b82bf8ee99f2cb0599e022cde",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "<span class=\"markdown prose dark:prose-invert contents\"><span class=\"paragraph\"><strong>Utiliza\u00e7\u00e3o de IA.</strong>\nPara este trabalho recorremos ao ChatGPT para obter sugest\u00f5es e apoio na implementa\u00e7\u00e3o e revis\u00e3o do c\u00f3digo, bem como para completar e melhorar os coment\u00e1rios e a documenta\u00e7\u00e3o presentes no notebook. A conversa est\u00e1 dispon\u00edvel <a href=\"https://chatgpt.com/share/6ac4ef69-e5a0-83eb-a692-b51fc939297a\" rel=\"noopener noreferrer\" target=\"_blank\">aqui</a>. As sugest\u00f5es obtidas foram analisadas e adaptadas por n\u00f3s de acordo com os requisitos e decis\u00f5es tomadas para este trabalho.</span>\n<span class=\"paragraph\">Para este trabalho recorremos ao Gemini para obter sugest\u00f5es e apoio na implementa\u00e7\u00e3o e revis\u00e3o do c\u00f3digo, nomeadamente na verifica\u00e7\u00e3o autom\u00e1tica da solu\u00e7\u00e3o. A conversa est\u00e1 dispon\u00edvel <a href=\"https://share.gemini.google/c1DMGMHmHJ7Y\" rel=\"noopener noreferrer\" target=\"_blank\">aqui</a>. As sugest\u00f5es obtidas foram analisadas e adaptadas por n\u00f3s de acordo com os requisitos e decis\u00f5es tomadas para este trabalho.</span></span>"
+          }
+        }
+      ],
+      "console": []
+    }
+  ]
+}

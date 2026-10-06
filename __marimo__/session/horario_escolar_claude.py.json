@@ -1,0 +1,354 @@
+{
+  "version": "1",
+  "metadata": {
+    "marimo_version": "0.25.0",
+    "script_metadata_hash": null
+  },
+  "cells": [
+    {
+      "id": "Hbol",
+      "code_hash": "1d0db38904205bec4d6f6f6a1f6cec3e",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/plain": ""
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "MJUe",
+      "code_hash": "6fb0ba9386d07ba728c6095cc36500a4",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "<span class=\"markdown prose dark:prose-invert contents\"><span class=\"paragraph\">Pretendemos gerar o hor\u00e1rio semanal de uma escola, dadas as turmas, disciplinas com o professor atribu\u00eddo, carga, se \u00e9 aula dupla (duplo_periodo) e necessidade de sala_especial. O tipo e quantidade\nde salas, e as exce\u00e7\u00f5es de disponibilidade dos professores.</span>\n<span class=\"paragraph\">Vamos abordar isto com programa\u00e7\u00e3o inteira, usando o solver usado na aula para a ficha 3 (SCIP via <code>pywraplp</code>).</span>\n<span class=\"paragraph\"><strong>Estrutura do notebook:</strong> o modelo \u00e9 constru\u00eddo por uma fun\u00e7\u00e3o <code>construir(dados, ...)</code> em vez de c\u00e9lulas com estado global. Isto \u00e9 necess\u00e1rio para o R9: temos de poder construir\n(e resolver) o modelo v\u00e1rias vezes, com dados diferentes e com partes do hor\u00e1rio fixadas.</span></span>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "vblA",
+      "code_hash": "edb757d0b862a705114df93860cbe09c",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/plain": ""
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "bkHC",
+      "code_hash": "52210d25597a995c11366f7d86dc00f9",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "<span class=\"markdown prose dark:prose-invert contents\"><h1 id=\"dados\">Dados</h1>\n<span class=\"paragraph\">Os CSV s\u00e3o lidos para um objeto <code>Dados</code> que usa <strong>nomes</strong> (turma, disciplina, professor, sala) e n\u00e3o \u00edndices. Assim, um mesmo identificador (ex.: o professor \"Ana\", a sala <code>laboratorio_1</code>)\nsignifica o mesmo em <code>H0</code> e em <code>H1</code>, mesmo que o conjunto de professores/salas/turmas mude, o que \u00e9 indispens\u00e1vel para comparar hor\u00e1rios.</span>\n<span class=\"paragraph\">Uma <strong>aula</strong> \u00e9 o tuplo <code>(turma, disciplina, professor, dia, hora, sala)</code>, uma linha por tempo letivo (uma aula dupla s\u00e3o duas linhas).</span></span>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "lEQa",
+      "code_hash": "b5218add2fa7680e105a83c69c24c49e",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/plain": ""
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "PKri",
+      "code_hash": "a470a4d68c1b773cd11112aa04e58ba2",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "<span class=\"markdown prose dark:prose-invert contents\"><h2 id=\"alteracoes-de-recursos\">Altera\u00e7\u00f5es de recursos</h2>\n<span class=\"paragraph\">Fun\u00e7\u00f5es que derivam um <code>Dados</code> novo a partir de um existente. Cobrem os tipos de altera\u00e7\u00e3o pedidos no R9 al\u00e9m de <code>dados_v2/</code> (que \u00e9 s\u00f3 ler outro CSV).\nO resto do c\u00f3digo (<code>incremental</code>) trabalha sobre <code>Dados</code> e nunca assume qual foi a altera\u00e7\u00e3o.</span></span>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "Xref",
+      "code_hash": "86c44df8edead2521184aeffb57e9bd7",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/plain": ""
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "SFPL",
+      "code_hash": "9333d99c9c13f9ba56aff24a22bcb9f3",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "<span class=\"markdown prose dark:prose-invert contents\"><h1 id=\"modelo\">Modelo</h1>\n<h2 id=\"analise-do-problema\">An\u00e1lise do problema</h2>\n<span class=\"paragraph\">Este \u00e9 um problema de aloca\u00e7\u00e3o: <em>compromissos</em> (as aulas de uma disciplina a uma turma) s\u00e3o alocados a <em>recursos</em> (um professor, uma sala e um tempo).\n\u00cdndices: turmas <marimo-tex class=\"arithmatex\">||(t&lt;T||)</marimo-tex>, disciplinas <marimo-tex class=\"arithmatex\">||(u&lt;U||)</marimo-tex>, professores <marimo-tex class=\"arithmatex\">||(p&lt;P||)</marimo-tex>, dias <marimo-tex class=\"arithmatex\">||(d&lt;D||)</marimo-tex>, horas <marimo-tex class=\"arithmatex\">||(h&lt;H||)</marimo-tex>, salas <marimo-tex class=\"arithmatex\">||(s&lt;S||)</marimo-tex>.</span>\n<span class=\"paragraph\"><strong>Par\u00e2metros</strong> (v\u00eam dos CSV): <marimo-tex class=\"arithmatex\">||(c_u||)</marimo-tex> \u00e9 a carga semanal de <marimo-tex class=\"arithmatex\">||(u||)</marimo-tex>; <marimo-tex class=\"arithmatex\">||(\\mathit{dup}_u\\in\\{0,1\\}||)</marimo-tex> indica se <marimo-tex class=\"arithmatex\">||(u||)</marimo-tex> \u00e9 de duplo per\u00edodo; <marimo-tex class=\"arithmatex\">||(\\mathit{Prof}_u||)</marimo-tex> \u00e9 o conjunto de professores de <marimo-tex class=\"arithmatex\">||(u||)</marimo-tex>;\n<marimo-tex class=\"arithmatex\">||(\\mathit{Sal}_u||)</marimo-tex> \u00e9 o conjunto de salas que <marimo-tex class=\"arithmatex\">||(u||)</marimo-tex> pode usar (o tipo <code>sala_especial</code>, ou as salas normais); <marimo-tex class=\"arithmatex\">||(\\mathit{Ind}\\subseteq P\\times D\\times H||)</marimo-tex> s\u00e3o as exce\u00e7\u00f5es de disponibilidade\n(<code>disponibilidade_excecoes.csv</code>); <marimo-tex class=\"arithmatex\">||(\\mathit{IndS}\\subseteq S\\times D\\times H||)</marimo-tex> s\u00e3o as salas indispon\u00edveis (avarias).</span>\n<span class=\"paragraph\"><strong>Vari\u00e1veis.</strong> Uma fam\u00edlia de vari\u00e1veis bin\u00e1rias com a sem\u00e2ntica</span>\n<marimo-tex class=\"arithmatex\">||[x_{t,u,p,d,h,s}=1 \\quad \\mbox{se e s\u00f3 se} \\quad \\mbox{a turma $t$ tem a disciplina $u$ com o professor $p$, no dia $d$, \u00e0 hora $h$, na sala $s$.}||]</marimo-tex><span class=\"paragraph\"><strong>Proibi\u00e7\u00f5es</strong> (fixam vari\u00e1veis a 0)</span>\n<ul>\n<li><strong>R0.</strong> O professor s\u00f3 leciona as suas disciplinas:\n<marimo-tex class=\"arithmatex\">||(\\;\\forall_{t,u}\\ \\forall_{p\\notin \\mathit{Prof}_u}\\cdot \\sum_{d,h,s} x_{t,u,p,d,h,s}=0||)</marimo-tex></li>\n<li><strong>R6.</strong> Disponibilidade do professor:\n<marimo-tex class=\"arithmatex\">||(\\;\\forall_{(p,d,h)\\in \\mathit{Ind}}\\cdot \\sum_{t,u,s} x_{t,u,p,d,h,s}=0||)</marimo-tex></li>\n<li><strong>R7a.</strong> Tipo de sala:\n<marimo-tex class=\"arithmatex\">||(\\;\\forall_{t,u,p,d,h}\\ \\forall_{s\\notin \\mathit{Sal}_u}\\cdot x_{t,u,p,d,h,s}=0||)</marimo-tex></li>\n<li><strong>R7c.</strong> Sala indispon\u00edvel:\n<marimo-tex class=\"arithmatex\">||(\\;\\forall_{(s,d,h)\\in \\mathit{IndS}}\\cdot \\sum_{t,u,p} x_{t,u,p,d,h,s}=0||)</marimo-tex></li>\n</ul>\n<span class=\"paragraph\"><strong>Limita\u00e7\u00f5es</strong> (limites m\u00e1ximos)</span>\n<ul>\n<li><strong>R1.</strong> Uma turma n\u00e3o tem duas aulas em simult\u00e2neo:\n<marimo-tex class=\"arithmatex\">||(\\;\\forall_{t,d,h}\\cdot \\sum_{u,p,s} x_{t,u,p,d,h,s}\\leq 1||)</marimo-tex></li>\n<li><strong>R3.</strong> No m\u00e1ximo uma ocorr\u00eancia da disciplina por dia (2 tempos se for duplo per\u00edodo):\n<marimo-tex class=\"arithmatex\">||(\\;\\forall_{t,u,d}\\cdot \\sum_{p,h,s} x_{t,u,p,d,h,s}\\leq 1+\\mathit{dup}_u||)</marimo-tex></li>\n<li><strong>R5.</strong> Um professor n\u00e3o d\u00e1 duas aulas em simult\u00e2neo:\n<marimo-tex class=\"arithmatex\">||(\\;\\forall_{p,d,h}\\cdot \\sum_{t,u,s} x_{t,u,p,d,h,s}\\leq 1||)</marimo-tex></li>\n<li><strong>R7b.</strong> Uma aula por sala em cada tempo:\n<marimo-tex class=\"arithmatex\">||(\\;\\forall_{s,d,h}\\cdot \\sum_{t,u,p} x_{t,u,p,d,h,s}\\leq 1||)</marimo-tex></li>\n</ul>\n<span class=\"paragraph\"><strong>Obriga\u00e7\u00f5es</strong> (limites m\u00ednimos)</span>\n<ul>\n<li><strong>R2.</strong> Cada disciplina cumpre exatamente a carga semanal, para cada turma:\n<marimo-tex class=\"arithmatex\">||(\\;\\forall_{t,u}\\cdot \\sum_{p,d,h,s} x_{t,u,p,d,h,s}=c_u||)</marimo-tex></li>\n</ul>\n<span class=\"paragraph\"><strong>Liga\u00e7\u00e3o entre vari\u00e1veis</strong></span>\n<ul>\n<li><strong>R4.</strong> Duplo per\u00edodo s\u00f3 em blocos de 2 tempos consecutivos, no mesmo dia, com o mesmo professor e sala, nos pares <marimo-tex class=\"arithmatex\">||((0,1),(2,3),(4,5)||)</marimo-tex>:\n<marimo-tex class=\"arithmatex\">||(\\;\\forall_{t,u:\\,\\mathit{dup}_u=1}\\ \\forall_{p,d,s}\\ \\forall_{b&lt;H/2}\\cdot x_{t,u,p,d,2b,s}=x_{t,u,p,d,2b+1,s}||)</marimo-tex></li>\n</ul>\n<h2 id=\"objetivo-o1-minimizar-os-buracos\">Objetivo O1: minimizar os buracos</h2>\n<span class=\"paragraph\">Seja <marimo-tex class=\"arithmatex\">||(y_{p,d,h}=\\sum_{t,u,s}x_{t,u,p,d,h,s}\\in\\{0,1\\}||)</marimo-tex> (o professor <marimo-tex class=\"arithmatex\">||(p||)</marimo-tex> tem aula no tempo <marimo-tex class=\"arithmatex\">||(h||)</marimo-tex> do dia <marimo-tex class=\"arithmatex\">||(d||)</marimo-tex>, por R5). Um tempo \u00e9 um buraco se est\u00e1 entre a primeira e a \u00faltima aula do dia\ne n\u00e3o tem aula. Para o expressar linearmente, acrescentam-se tr\u00eas fam\u00edlias de bin\u00e1rias:\n<marimo-tex class=\"arithmatex\">||(\\mathit{pre}_{p,d,h}||)</marimo-tex> (h\u00e1 aula em algum tempo <marimo-tex class=\"arithmatex\">||(\\leq h||)</marimo-tex>), <marimo-tex class=\"arithmatex\">||(\\mathit{pos}_{p,d,h}||)</marimo-tex> (h\u00e1 aula em algum tempo <marimo-tex class=\"arithmatex\">||(\\geq h||)</marimo-tex>) e <marimo-tex class=\"arithmatex\">||(\\mathit{ent}_{p,d,h}||)</marimo-tex> (<marimo-tex class=\"arithmatex\">||(h||)</marimo-tex> est\u00e1 entre a primeira e a \u00faltima aula):</span>\n<marimo-tex class=\"arithmatex\">||[\\mathit{pre}_{p,d,h}\\geq y_{p,d,h},\\quad \\mathit{pre}_{p,d,h}\\geq \\mathit{pre}_{p,d,h-1},\\quad \\mathit{pos}_{p,d,h}\\geq y_{p,d,h},\\quad \\mathit{pos}_{p,d,h}\\geq \\mathit{pos}_{p,d,h+1},\\quad \\mathit{ent}_{p,d,h}\\geq \\mathit{pre}_{p,d,h}+\\mathit{pos}_{p,d,h}-1||]</marimo-tex><marimo-tex class=\"arithmatex\">||[\\min \\sum_{p,d,h}\\big(\\mathit{ent}_{p,d,h}-y_{p,d,h}\\big)||]</marimo-tex><span class=\"paragraph\">Como <marimo-tex class=\"arithmatex\">||(\\sum y||)</marimo-tex> \u00e9 constante (pela R2), minimizar <marimo-tex class=\"arithmatex\">||(\\sum \\mathit{ent}||)</marimo-tex> \u00e9 equivalente, e como \u00e9 uma minimiza\u00e7\u00e3o o solver nunca p\u00f5e <marimo-tex class=\"arithmatex\">||(\\mathit{pre},\\mathit{pos},\\mathit{ent}||)</marimo-tex> a 1 sem necessidade.\nN\u00e3o \u00e9 preciso a disjun\u00e7\u00e3o \"primeiro/\u00faltimo\" da formula\u00e7\u00e3o com <code>OnlyEnforceIf</code>, que o <code>pywraplp</code> n\u00e3o tem.</span>\n<h2 id=\"implementacao\">Implementa\u00e7\u00e3o</h2>\n<span class=\"paragraph\">A matriz densa <marimo-tex class=\"arithmatex\">||(T\\times U\\times P\\times D\\times H\\times S||)</marimo-tex> \u00e9 enorme e quase toda for\u00e7ada a 0 pelas proibi\u00e7\u00f5es. Por isso <code>construir</code> <strong>s\u00f3 cria as vari\u00e1veis permitidas</strong>,\no que \u00e9 equivalente a R0, R6, R7a e R7c. Para R4, em disciplinas de duplo per\u00edodo cria-se uma \u00fanica vari\u00e1vel <marimo-tex class=\"arithmatex\">||(z_{t,u,p,d,b,s}||)</marimo-tex> por bloco, que ocupa os tempos <marimo-tex class=\"arithmatex\">||(2b||)</marimo-tex> e <marimo-tex class=\"arithmatex\">||(2b+1||)</marimo-tex>\n(a igualdade fica verdadeira por constru\u00e7\u00e3o). As restantes restri\u00e7\u00f5es s\u00e3o adicionadas assim, com <marimo-tex class=\"arithmatex\">||(n_u=1+\\mathit{dup}_u||)</marimo-tex>:</span>\n<table>\n<thead>\n<tr>\n<th>Restri\u00e7\u00e3o</th>\n<th>C\u00f3digo</th>\n</tr>\n</thead>\n<tbody>\n<tr>\n<td>R1, R5, R7b</td>\n<td><code>\u03a3 x \u2264 1</code> por (turma, dia, hora), (professor, dia, hora), (sala, dia, hora); uma vari\u00e1vel de bloco conta nos 2 tempos</td>\n</tr>\n<tr>\n<td>R2</td>\n<td><code>\u03a3 n_u \u00b7 x == c_u \u2212 fixas</code> por (turma, disciplina)</td>\n</tr>\n<tr>\n<td>R3</td>\n<td><code>\u03a3 x \u2264 1</code> por (turma, disciplina, dia); como cada vari\u00e1vel \u00e9 um tempo ou um bloco, 1 vari\u00e1vel \u21d4 \u2264 <marimo-tex class=\"arithmatex\">||(1+\\mathit{dup}_u||)</marimo-tex> tempos</td>\n</tr>\n</tbody>\n</table></span>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "BYtC",
+      "code_hash": "1e13e269c4fc9c1541be6fca58d41125",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/plain": ""
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "RGSE",
+      "code_hash": "5b3a2f051544cbcdcbe702e10b2d41f3",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "<span class=\"markdown prose dark:prose-invert contents\"><h2 id=\"verificacao-independente-e-comparacao-de-horarios\">Verifica\u00e7\u00e3o independente e compara\u00e7\u00e3o de hor\u00e1rios</h2>\n<span class=\"paragraph\"><code>validar</code> confere R0\u2013R7 diretamente sobre a lista de aulas, sem passar pelo modelo, por isso serve de prova de que <code>H1</code> \u00e9 v\u00e1lido.\n<code>diferencas</code> conta as aulas que mudam de tempo/sala: uma aula de <code>H0</code> \u00e9 \"alterada\" se o tuplo <code>(turma, disciplina, dia, hora, sala)</code> j\u00e1 n\u00e3o existe em <code>H1</code>\n(a troca de professor numa substitui\u00e7\u00e3o \u00e9 obrigat\u00f3ria e n\u00e3o conta; fica numa coluna \u00e0 parte).</span></span>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "Kclp",
+      "code_hash": "9cac7a70509a600b0971cce9388af03a",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/plain": ""
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "emfo",
+      "code_hash": "c4f0513bdab4da3db9790399705868c3",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "<span class=\"markdown prose dark:prose-invert contents\"><h1 id=\"r9-construcao-incremental\">R9: constru\u00e7\u00e3o incremental</h1>\n<h2 id=\"formalizacao\">Formaliza\u00e7\u00e3o</h2>\n<span class=\"paragraph\">Seja <marimo-tex class=\"arithmatex\">||(A_0||)</marimo-tex> o conjunto de aulas de <marimo-tex class=\"arithmatex\">||(H_0||)</marimo-tex>, cada uma <marimo-tex class=\"arithmatex\">||(a=(t,u,p_a,d,h,s)||)</marimo-tex>, e <marimo-tex class=\"arithmatex\">||(\\mathit{ok}(a)||)</marimo-tex> o predicado \"a aula <marimo-tex class=\"arithmatex\">||(a||)</marimo-tex> continua v\u00e1lida com os novos dados\":</span>\n<marimo-tex class=\"arithmatex\">||[\\mathit{ok}(a)\\;\\equiv\\; p_a\\in \\mathit{Prof}_u\\ \\wedge\\ (p_a,d,h)\\notin \\mathit{Ind}'\\ \\wedge\\ s\\in \\mathit{Sal}'_u\\ \\wedge\\ (s,d,h)\\notin \\mathit{IndS}'||]</marimo-tex><span class=\"paragraph\">(isto \u00e9 R0, R6 e R7 com os dados novos, assinalados com <marimo-tex class=\"arithmatex\">||('||)</marimo-tex>). As aulas <strong>afetadas</strong> s\u00e3o <marimo-tex class=\"arithmatex\">||(I=\\{a\\in A_0:\\neg\\,\\mathit{ok}(a)\\}||)</marimo-tex>, mais todas as aulas de <marimo-tex class=\"arithmatex\">||((t,u)||)</marimo-tex> cuja carga <marimo-tex class=\"arithmatex\">||(c'_u||)</marimo-tex> desceu.\nAs aulas agrupam-se em <em>unidades</em> (um tempo, ou um bloco de 2 se <marimo-tex class=\"arithmatex\">||(\\mathit{dup}_u=1||)</marimo-tex>) para nunca partir um bloco.</span>\n<span class=\"paragraph\">Seja <marimo-tex class=\"arithmatex\">||(L||)</marimo-tex> uma vizinhan\u00e7a de unidades livres, com <marimo-tex class=\"arithmatex\">||(I\\subseteq L||)</marimo-tex>. A <strong>fixa\u00e7\u00e3o</strong> imp\u00f5e, para todas as aulas n\u00e3o livres,</span>\n<marimo-tex class=\"arithmatex\">||[\\forall_{a=(t,u,p_a,d,h,s)\\in A_0\\setminus L}\\cdot x_{t,u,p_a,d,h,s}=1||]</marimo-tex><span class=\"paragraph\">Com estas vari\u00e1veis a 1, R1, R5 e R7b for\u00e7am a 0 todas as vari\u00e1veis que usem a mesma turma, professor ou sala nesse tempo, e R2 e R3 reduzem a carga a colocar a <marimo-tex class=\"arithmatex\">||(c_u-|\\{\\mbox{fixas de }(t,u)\\}|||)</marimo-tex>.\n\u00c9 por isso que o c\u00f3digo trata as fixas como constantes e n\u00e3o cria essas vari\u00e1veis (o modelo resultante \u00e9 o mesmo, s\u00f3 mais pequeno).</span>\n<span class=\"paragraph\"><strong>Objetivo (minimizar as aulas alteradas).</strong> Uma aula de <marimo-tex class=\"arithmatex\">||(H_0||)</marimo-tex> fica <em>mantida</em> se existe uma aula em <marimo-tex class=\"arithmatex\">||(H_1||)</marimo-tex> na mesma turma, disciplina, dia, hora e sala (o professor pode mudar, numa substitui\u00e7\u00e3o):</span>\n<marimo-tex class=\"arithmatex\">||[\\mathit{mant}_a=\\sum_{p} x_{t,u,p,d,h,s}\\in\\{0,1\\},\\qquad \\max \\sum_{a\\in A_0\\cap L}\\mathit{mant}_a\\quad\\Longleftrightarrow\\quad \\min\\ \\underbrace{\\big|\\{a\\in A_0:\\mathit{mant}_a=0\\}\\big|}_{\\mbox{aulas alteradas}}||]</marimo-tex><h2 id=\"algoritmo\">Algoritmo</h2>\n<ol>\n<li>Calcular <marimo-tex class=\"arithmatex\">||(I||)</marimo-tex> e as unidades. N\u00edvel 0: <marimo-tex class=\"arithmatex\">||(L=I||)</marimo-tex>.</li>\n<li>Resolver o modelo acima com R0\u2013R7 sobre os dados novos, fixa\u00e7\u00f5es e objetivo. Se for <strong>imposs\u00edvel</strong>, alargar <marimo-tex class=\"arithmatex\">||(L||)</marimo-tex> e repetir:\n   n\u00edvel 1 junta as unidades das turmas e dos professores j\u00e1 envolvidos, n\u00edvel 2 repete uma vez, n\u00edvel 3 usa <marimo-tex class=\"arithmatex\">||(L=A_0||)</marimo-tex> (modelo completo, com <marimo-tex class=\"arithmatex\">||(H_0||)</marimo-tex> como <em>hint</em>).</li>\n<li>O n\u00edvel 3 n\u00e3o tem fixa\u00e7\u00f5es, logo \u00e9 o problema completo: <strong>se existe <marimo-tex class=\"arithmatex\">||(H_1||)</marimo-tex> v\u00e1lido o m\u00e9todo encontra-o</strong>.</li>\n</ol>\n<span class=\"paragraph\">Compromisso: nos n\u00edveis 0\u20132 o n\u00famero de altera\u00e7\u00f5es \u00e9 \u00f3timo <em>dentro de <marimo-tex class=\"arithmatex\">||(L||)</marimo-tex></em>, n\u00e3o necessariamente o m\u00ednimo global. A tabela de resultados compara com o n\u00edvel global (m\u00e9todo B).</span></span>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "Hstk",
+      "code_hash": "303aaa03e47ea6d18275da16ab8f1ba3",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/plain": ""
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "nWHF",
+      "code_hash": "b0f1aed7429e1185b77e958db19ac51d",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "<span class=\"markdown prose dark:prose-invert contents\"><h1 id=\"passo-1-h0-a-partir-de-dados\">Passo 1: <code>H0</code> a partir de <code>dados/</code></h1></span>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "iLit",
+      "code_hash": "03655686b77f368dbcbd1df879c59bbb",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/plain": ""
+          }
+        }
+      ],
+      "console": [
+        {
+          "type": "stream",
+          "name": "stdout",
+          "text": "H0: {'estado': '\u00f3tima', 't_build': 0.07835109997540712, 't_solve': 2.3873758000554517}\n",
+          "mimetype": "text/plain"
+        }
+      ]
+    },
+    {
+      "id": "ZHCJ",
+      "code_hash": "a42a3d72978fd8c69afe519fa4354ac6",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "<span class=\"markdown prose dark:prose-invert contents\"><h1 id=\"passo-2-h1-a-partir-de-dados_v2-tres-maneiras\">Passo 2: <code>H1</code> a partir de <code>dados_v2/</code>, tr\u00eas maneiras</h1>\n<ul>\n<li><strong>A. Do zero:</strong> resolver <code>dados_v2/</code> sem usar <code>H0</code> (s\u00f3 viabilidade, a variante mais barata de resolver do zero).</li>\n<li><strong>B. Global com hint:</strong> modelo completo, <code>H0</code> como ponto de partida e objetivo \"manter\".</li>\n<li><strong>C. Incremental:</strong> o m\u00e9todo descrito acima.</li>\n</ul></span>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "ROlb",
+      "code_hash": "2727d003bde8f91846b0f018c2bf5bdf",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/plain": ""
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "qnkX",
+      "code_hash": "3dbcde9825999c1c1e493481f6217710",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/html": "<div style='display: flex;flex: 1;flex-direction: column;justify-content: flex-start;align-items: normal;flex-wrap: nowrap;gap: 0.5rem'><span class=\"markdown prose dark:prose-invert contents\"><span class=\"paragraph\"><strong>Resultados em <code>dados_v2/</code></strong></span></span><marimo-ui-element object-id='qnkX-0' random-id='2fd37f31-c191-85f8-fbe6-992d15b50eb6'><marimo-table data-initial-value='[]' data-label='null' data-data='&quot;[{&#92;&quot;cen&#92;&#92;u00e1rio&#92;&quot;:&#92;&quot;dados_v2/&#92;&quot;,&#92;&quot;m&#92;&#92;u00e9todo&#92;&quot;:&#92;&quot;A. do zero&#92;&quot;,&#92;&quot;tempo (s)&#92;&quot;:0.106,&#92;&quot;aulas alteradas&#92;&quot;:30,&#92;&quot;de&#92;&quot;:34,&#92;&quot;s&#92;&#92;u00f3 mudou professor&#92;&quot;:0,&#92;&quot;viola&#92;&#92;u00e7&#92;&#92;u00f5es&#92;&quot;:0,&#92;&quot;estado&#92;&quot;:&#92;&quot;&#92;&#92;u00f3tima&#92;&quot;},{&#92;&quot;cen&#92;&#92;u00e1rio&#92;&quot;:&#92;&quot;dados_v2/&#92;&quot;,&#92;&quot;m&#92;&#92;u00e9todo&#92;&quot;:&#92;&quot;B. global + hint&#92;&quot;,&#92;&quot;tempo (s)&#92;&quot;:0.063,&#92;&quot;aulas alteradas&#92;&quot;:0,&#92;&quot;de&#92;&quot;:34,&#92;&quot;s&#92;&#92;u00f3 mudou professor&#92;&quot;:0,&#92;&quot;viola&#92;&#92;u00e7&#92;&#92;u00f5es&#92;&quot;:0,&#92;&quot;estado&#92;&quot;:&#92;&quot;&#92;&#92;u00f3tima&#92;&quot;},{&#92;&quot;cen&#92;&#92;u00e1rio&#92;&quot;:&#92;&quot;dados_v2/&#92;&quot;,&#92;&quot;m&#92;&#92;u00e9todo&#92;&quot;:&#92;&quot;C. incremental&#92;&quot;,&#92;&quot;tempo (s)&#92;&quot;:0.01,&#92;&quot;aulas alteradas&#92;&quot;:0,&#92;&quot;de&#92;&quot;:34,&#92;&quot;s&#92;&#92;u00f3 mudou professor&#92;&quot;:0,&#92;&quot;viola&#92;&#92;u00e7&#92;&#92;u00f5es&#92;&quot;:0,&#92;&quot;estado&#92;&quot;:&#92;&quot;&#92;&#92;u00f3tima na vizinhan&#92;&#92;u00e7a&#92;&quot;}]&quot;' data-total-rows='3' data-total-columns='8' data-max-columns='50' data-banner-text='&quot;&quot;' data-pagination='false' data-page-size='10' data-field-types='[[&quot;cen\u00e1rio&quot;,[&quot;string&quot;,&quot;str&quot;]],[&quot;m\u00e9todo&quot;,[&quot;string&quot;,&quot;str&quot;]],[&quot;tempo (s)&quot;,[&quot;number&quot;,&quot;float64&quot;]],[&quot;aulas alteradas&quot;,[&quot;integer&quot;,&quot;int64&quot;]],[&quot;de&quot;,[&quot;integer&quot;,&quot;int64&quot;]],[&quot;s\u00f3 mudou professor&quot;,[&quot;integer&quot;,&quot;int64&quot;]],[&quot;viola\u00e7\u00f5es&quot;,[&quot;integer&quot;,&quot;int64&quot;]],[&quot;estado&quot;,[&quot;string&quot;,&quot;str&quot;]]]' data-show-filters='true' data-show-download='true' data-show-search='true' data-show-column-summaries='false' data-show-data-types='true' data-show-page-size-selector='false' data-show-column-explorer='true' data-show-chart-builder='true' data-row-headers='[]' data-hidden-columns='[]' data-has-stable-row-id='false' data-lazy='false' data-preload='false'></marimo-table></marimo-ui-element><span class=\"markdown prose dark:prose-invert contents\"><span class=\"paragraph\"><strong>N\u00edveis tentados pelo m\u00e9todo incremental</strong></span></span><marimo-ui-element object-id='qnkX-1' random-id='1df62b1d-ff5d-b5e0-0e94-56fb97674e50'><marimo-table data-initial-value='[]' data-label='null' data-data='&quot;[{&#92;&quot;n&#92;&#92;u00edvel&#92;&quot;:&#92;&quot;0: s&#92;&#92;u00f3 afetadas&#92;&quot;,&#92;&quot;unidades livres&#92;&quot;:0,&#92;&quot;estado&#92;&quot;:&#92;&quot;&#92;&#92;u00f3tima&#92;&quot;,&#92;&quot;build (s)&#92;&quot;:0.005,&#92;&quot;solve (s)&#92;&quot;:0.0}]&quot;' data-total-rows='1' data-total-columns='5' data-max-columns='50' data-banner-text='&quot;&quot;' data-pagination='false' data-page-size='10' data-field-types='[[&quot;n\u00edvel&quot;,[&quot;string&quot;,&quot;str&quot;]],[&quot;unidades livres&quot;,[&quot;integer&quot;,&quot;int64&quot;]],[&quot;estado&quot;,[&quot;string&quot;,&quot;str&quot;]],[&quot;build (s)&quot;,[&quot;number&quot;,&quot;float64&quot;]],[&quot;solve (s)&quot;,[&quot;number&quot;,&quot;float64&quot;]]]' data-show-filters='true' data-show-download='true' data-show-search='true' data-show-column-summaries='false' data-show-data-types='true' data-show-page-size-selector='false' data-show-column-explorer='true' data-show-chart-builder='true' data-row-headers='[]' data-hidden-columns='[]' data-has-stable-row-id='false' data-lazy='false' data-preload='false'></marimo-table></marimo-ui-element></div>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "TqIu",
+      "code_hash": "ad8b06c9dae635291ab927b3237be6d8",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "<span class=\"markdown prose dark:prose-invert contents\"><h1 id=\"outros-tipos-de-alteracao\">Outros tipos de altera\u00e7\u00e3o</h1>\n<span class=\"paragraph\">O mesmo c\u00f3digo (<code>incremental</code>) sem mudan\u00e7as. Os cen\u00e1rios s\u00e3o gerados a partir de <code>H0</code>: o professor com mais aulas, a sala mais usada, etc.</span></span>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "Vxnm",
+      "code_hash": "d4ba494f8af795b4d86d05b9cdafdfbf",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/html": "<marimo-ui-element object-id='Vxnm-0' random-id='f1aeff2a-5a28-71b7-8017-f5cde9ec1202'><marimo-table data-initial-value='[]' data-label='null' data-data='&quot;[{&#92;&quot;cen&#92;&#92;u00e1rio&#92;&quot;:&#92;&quot;Prof. Ana indispon&#92;&#92;u00edvel em [(0, 2), (0, 3)]&#92;&quot;,&#92;&quot;m&#92;&#92;u00e9todo&#92;&quot;:&#92;&quot;A. do zero&#92;&quot;,&#92;&quot;tempo (s)&#92;&quot;:0.122,&#92;&quot;aulas alteradas&#92;&quot;:32,&#92;&quot;de&#92;&quot;:34,&#92;&quot;s&#92;&#92;u00f3 mudou professor&#92;&quot;:0,&#92;&quot;viola&#92;&#92;u00e7&#92;&#92;u00f5es&#92;&quot;:0,&#92;&quot;estado&#92;&quot;:&#92;&quot;&#92;&#92;u00f3tima&#92;&quot;},{&#92;&quot;cen&#92;&#92;u00e1rio&#92;&quot;:&#92;&quot;Prof. Ana indispon&#92;&#92;u00edvel em [(0, 2), (0, 3)]&#92;&quot;,&#92;&quot;m&#92;&#92;u00e9todo&#92;&quot;:&#92;&quot;B. global + hint&#92;&quot;,&#92;&quot;tempo (s)&#92;&quot;:0.177,&#92;&quot;aulas alteradas&#92;&quot;:2,&#92;&quot;de&#92;&quot;:34,&#92;&quot;s&#92;&#92;u00f3 mudou professor&#92;&quot;:0,&#92;&quot;viola&#92;&#92;u00e7&#92;&#92;u00f5es&#92;&quot;:0,&#92;&quot;estado&#92;&quot;:&#92;&quot;&#92;&#92;u00f3tima&#92;&quot;},{&#92;&quot;cen&#92;&#92;u00e1rio&#92;&quot;:&#92;&quot;Prof. Ana indispon&#92;&#92;u00edvel em [(0, 2), (0, 3)]&#92;&quot;,&#92;&quot;m&#92;&#92;u00e9todo&#92;&quot;:&#92;&quot;C. incremental&#92;&quot;,&#92;&quot;tempo (s)&#92;&quot;:0.011,&#92;&quot;aulas alteradas&#92;&quot;:2,&#92;&quot;de&#92;&quot;:34,&#92;&quot;s&#92;&#92;u00f3 mudou professor&#92;&quot;:0,&#92;&quot;viola&#92;&#92;u00e7&#92;&#92;u00f5es&#92;&quot;:0,&#92;&quot;estado&#92;&quot;:&#92;&quot;&#92;&#92;u00f3tima na vizinhan&#92;&#92;u00e7a&#92;&quot;},{&#92;&quot;cen&#92;&#92;u00e1rio&#92;&quot;:&#92;&quot;Prof. Eduardo fica dispon&#92;&#92;u00edvel (sem exce&#92;&#92;u00e7&#92;&#92;u00f5es)&#92;&quot;,&#92;&quot;m&#92;&#92;u00e9todo&#92;&quot;:&#92;&quot;A. do zero&#92;&quot;,&#92;&quot;tempo (s)&#92;&quot;:0.116,&#92;&quot;aulas alteradas&#92;&quot;:30,&#92;&quot;de&#92;&quot;:34,&#92;&quot;s&#92;&#92;u00f3 mudou professor&#92;&quot;:0,&#92;&quot;viola&#92;&#92;u00e7&#92;&#92;u00f5es&#92;&quot;:0,&#92;&quot;estado&#92;&quot;:&#92;&quot;&#92;&#92;u00f3tima&#92;&quot;},{&#92;&quot;cen&#92;&#92;u00e1rio&#92;&quot;:&#92;&quot;Prof. Eduardo fica dispon&#92;&#92;u00edvel (sem exce&#92;&#92;u00e7&#92;&#92;u00f5es)&#92;&quot;,&#92;&quot;m&#92;&#92;u00e9todo&#92;&quot;:&#92;&quot;B. global + hint&#92;&quot;,&#92;&quot;tempo (s)&#92;&quot;:0.076,&#92;&quot;aulas alteradas&#92;&quot;:0,&#92;&quot;de&#92;&quot;:34,&#92;&quot;s&#92;&#92;u00f3 mudou professor&#92;&quot;:0,&#92;&quot;viola&#92;&#92;u00e7&#92;&#92;u00f5es&#92;&quot;:0,&#92;&quot;estado&#92;&quot;:&#92;&quot;&#92;&#92;u00f3tima&#92;&quot;},{&#92;&quot;cen&#92;&#92;u00e1rio&#92;&quot;:&#92;&quot;Prof. Eduardo fica dispon&#92;&#92;u00edvel (sem exce&#92;&#92;u00e7&#92;&#92;u00f5es)&#92;&quot;,&#92;&quot;m&#92;&#92;u00e9todo&#92;&quot;:&#92;&quot;C. incremental&#92;&quot;,&#92;&quot;tempo (s)&#92;&quot;:0.008,&#92;&quot;aulas alteradas&#92;&quot;:0,&#92;&quot;de&#92;&quot;:34,&#92;&quot;s&#92;&#92;u00f3 mudou professor&#92;&quot;:0,&#92;&quot;viola&#92;&#92;u00e7&#92;&#92;u00f5es&#92;&quot;:0,&#92;&quot;estado&#92;&quot;:&#92;&quot;&#92;&#92;u00f3tima na vizinhan&#92;&#92;u00e7a&#92;&quot;},{&#92;&quot;cen&#92;&#92;u00e1rio&#92;&quot;:&#92;&quot;sala Sala Normal_1 avariada (semana toda)&#92;&quot;,&#92;&quot;m&#92;&#92;u00e9todo&#92;&quot;:&#92;&quot;A. do zero&#92;&quot;,&#92;&quot;tempo (s)&#92;&quot;:0.1,&#92;&quot;aulas alteradas&#92;&quot;:31,&#92;&quot;de&#92;&quot;:34,&#92;&quot;s&#92;&#92;u00f3 mudou professor&#92;&quot;:0,&#92;&quot;viola&#92;&#92;u00e7&#92;&#92;u00f5es&#92;&quot;:0,&#92;&quot;estado&#92;&quot;:&#92;&quot;&#92;&#92;u00f3tima&#92;&quot;},{&#92;&quot;cen&#92;&#92;u00e1rio&#92;&quot;:&#92;&quot;sala Sala Normal_1 avariada (semana toda)&#92;&quot;,&#92;&quot;m&#92;&#92;u00e9todo&#92;&quot;:&#92;&quot;B. global + hint&#92;&quot;,&#92;&quot;tempo (s)&#92;&quot;:0.196,&#92;&quot;aulas alteradas&#92;&quot;:21,&#92;&quot;de&#92;&quot;:34,&#92;&quot;s&#92;&#92;u00f3 mudou professor&#92;&quot;:0,&#92;&quot;viola&#92;&#92;u00e7&#92;&#92;u00f5es&#92;&quot;:0,&#92;&quot;estado&#92;&quot;:&#92;&quot;&#92;&#92;u00f3tima&#92;&quot;},{&#92;&quot;cen&#92;&#92;u00e1rio&#92;&quot;:&#92;&quot;sala Sala Normal_1 avariada (semana toda)&#92;&quot;,&#92;&quot;m&#92;&#92;u00e9todo&#92;&quot;:&#92;&quot;C. incremental&#92;&quot;,&#92;&quot;tempo (s)&#92;&quot;:0.066,&#92;&quot;aulas alteradas&#92;&quot;:21,&#92;&quot;de&#92;&quot;:34,&#92;&quot;s&#92;&#92;u00f3 mudou professor&#92;&quot;:0,&#92;&quot;viola&#92;&#92;u00e7&#92;&#92;u00f5es&#92;&quot;:0,&#92;&quot;estado&#92;&quot;:&#92;&quot;&#92;&#92;u00f3tima na vizinhan&#92;&#92;u00e7a&#92;&quot;},{&#92;&quot;cen&#92;&#92;u00e1rio&#92;&quot;:&#92;&quot;turma nova&#92;&quot;,&#92;&quot;m&#92;&#92;u00e9todo&#92;&quot;:&#92;&quot;A. do zero&#92;&quot;,&#92;&quot;tempo (s)&#92;&quot;:0.136,&#92;&quot;aulas alteradas&#92;&quot;:31,&#92;&quot;de&#92;&quot;:34,&#92;&quot;s&#92;&#92;u00f3 mudou professor&#92;&quot;:0,&#92;&quot;viola&#92;&#92;u00e7&#92;&#92;u00f5es&#92;&quot;:0,&#92;&quot;estado&#92;&quot;:&#92;&quot;&#92;&#92;u00f3tima&#92;&quot;}]&quot;' data-total-rows='15' data-total-columns='8' data-max-columns='50' data-banner-text='&quot;&quot;' data-pagination='true' data-page-size='10' data-field-types='[[&quot;cen\u00e1rio&quot;,[&quot;string&quot;,&quot;str&quot;]],[&quot;m\u00e9todo&quot;,[&quot;string&quot;,&quot;str&quot;]],[&quot;tempo (s)&quot;,[&quot;number&quot;,&quot;float64&quot;]],[&quot;aulas alteradas&quot;,[&quot;integer&quot;,&quot;int64&quot;]],[&quot;de&quot;,[&quot;integer&quot;,&quot;int64&quot;]],[&quot;s\u00f3 mudou professor&quot;,[&quot;integer&quot;,&quot;int64&quot;]],[&quot;viola\u00e7\u00f5es&quot;,[&quot;integer&quot;,&quot;int64&quot;]],[&quot;estado&quot;,[&quot;string&quot;,&quot;str&quot;]]]' data-show-filters='true' data-show-download='true' data-show-search='true' data-show-column-summaries='true' data-show-data-types='true' data-show-page-size-selector='true' data-show-column-explorer='true' data-show-chart-builder='true' data-row-headers='[]' data-hidden-columns='[]' data-has-stable-row-id='false' data-lazy='false' data-preload='false'></marimo-table></marimo-ui-element>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "DnEU",
+      "code_hash": "a53a9dc3e3bab5772991c4d4ca3e7f6f",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "<span class=\"markdown prose dark:prose-invert contents\"><h1 id=\"representacao-dos-dados\">Representa\u00e7\u00e3o dos dados</h1></span>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "ulZA",
+      "code_hash": "003f4e5fa92a526d5b7661bd25b8ca11",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/html": "<marimo-ui-element object-id='ulZA-0' random-id='b502b409-3338-b983-43e4-7db890e79731'><marimo-dropdown data-initial-value='[&quot;H1 (incremental)&quot;]' data-label='&quot;&#92;u003cspan class=&#92;&quot;markdown prose dark:prose-invert contents&#92;&quot;&#92;u003e&#92;u003cspan class=&#92;&quot;paragraph&#92;&quot;&#92;u003eVers\u00e3o&#92;u003c/span&#92;u003e&#92;u003c/span&#92;u003e&quot;' data-options='[&quot;H0&quot;,&quot;H1 (incremental)&quot;,&quot;H1 (do zero)&quot;]' data-allow-select-none='false' data-searchable='false' data-full-width='false' data-disabled='false'></marimo-dropdown></marimo-ui-element>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "ecfG",
+      "code_hash": "1e49ab112b303f1ad713447e115ddfff",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/plain": ""
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "Pvdt",
+      "code_hash": "9f7c5102fb118de7e975d864238244f0",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/plain": ""
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "ZBYS",
+      "code_hash": "423569cf86fb06df5b6e3cf3d2ecd410",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/html": "<div style='display: flex;flex: 1;flex-direction: column;justify-content: flex-start;align-items: normal;flex-wrap: nowrap;gap: 0.5rem'><marimo-ui-element object-id='ZBYS-0' random-id='886499da-e0b9-227f-900f-6b057bc2297c'><marimo-dropdown data-initial-value='[&quot;7\u00baA&quot;]' data-label='&quot;&#92;u003cspan class=&#92;&quot;markdown prose dark:prose-invert contents&#92;&quot;&#92;u003e&#92;u003cspan class=&#92;&quot;paragraph&#92;&quot;&#92;u003eTurma&#92;u003c/span&#92;u003e&#92;u003c/span&#92;u003e&quot;' data-options='[&quot;7\u00baA&quot;,&quot;7\u00baB&quot;]' data-allow-select-none='false' data-searchable='false' data-full-width='false' data-disabled='false'></marimo-dropdown></marimo-ui-element><marimo-ui-element object-id='ZBYS-1' random-id='998b29cf-8d12-08ec-1075-6ffa7b855e49'><marimo-dropdown data-initial-value='[&quot;Prof. Ana&quot;]' data-label='&quot;&#92;u003cspan class=&#92;&quot;markdown prose dark:prose-invert contents&#92;&quot;&#92;u003e&#92;u003cspan class=&#92;&quot;paragraph&#92;&quot;&#92;u003eProfessor&#92;u003c/span&#92;u003e&#92;u003c/span&#92;u003e&quot;' data-options='[&quot;Prof. Ana&quot;,&quot;Prof. Bruno&quot;,&quot;Prof. Carla&quot;,&quot;Prof. Diana&quot;,&quot;Prof. Eduardo&quot;]' data-allow-select-none='false' data-searchable='false' data-full-width='false' data-disabled='false'></marimo-dropdown></marimo-ui-element></div>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "aLJB",
+      "code_hash": "a7507b8cfa5f282b3a24fa649a5a2b69",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/html": "<div style='display: flex;flex: 1;flex-direction: column;justify-content: flex-start;align-items: normal;flex-wrap: nowrap;gap: 0.5rem'><span class=\"markdown prose dark:prose-invert contents\"><h3 id=\"horario-da-turma\">Hor\u00e1rio da Turma</h3></span><marimo-ui-element object-id='aLJB-0' random-id='e55e2a9e-dc57-85ba-05b0-5f9b4115a4aa'><marimo-table data-initial-value='[]' data-label='null' data-data='&quot;[{&#92;&quot;Hora&#92;&quot;:&#92;&quot;8:00&#92;&quot;,&#92;&quot;Segunda&#92;&quot;:&#92;&quot;&#92;&quot;,&#92;&quot;Ter&#92;&#92;u00e7a&#92;&quot;:&#92;&quot;&#92;&quot;,&#92;&quot;Quarta&#92;&quot;:&#92;&quot;Portugu&#92;&#92;u00eas (Sala Normal_2) - Prof. Bruno&#92;&quot;,&#92;&quot;Quinta&#92;&quot;:&#92;&quot;&#92;&quot;,&#92;&quot;Sexta&#92;&quot;:&#92;&quot;Hist&#92;&#92;u00f3ria (Sala Normal_1) - Prof. Diana&#92;&quot;},{&#92;&quot;Hora&#92;&quot;:&#92;&quot;9:00&#92;&quot;,&#92;&quot;Segunda&#92;&quot;:&#92;&quot;Ci&#92;&#92;u00eancias (Laborat&#92;&#92;u00f3rio_1) - Prof. Carla&#92;&quot;,&#92;&quot;Ter&#92;&#92;u00e7a&#92;&quot;:&#92;&quot;Portugu&#92;&#92;u00eas (Sala Normal_1) - Prof. Bruno&#92;&quot;,&#92;&quot;Quarta&#92;&quot;:&#92;&quot;Ci&#92;&#92;u00eancias (Laborat&#92;&#92;u00f3rio_1) - Prof. Carla&#92;&quot;,&#92;&quot;Quinta&#92;&quot;:&#92;&quot;Portugu&#92;&#92;u00eas (Sala Normal_1) - Prof. Bruno&#92;&quot;,&#92;&quot;Sexta&#92;&quot;:&#92;&quot;Portugu&#92;&#92;u00eas (Sala Normal_1) - Prof. Bruno&#92;&quot;},{&#92;&quot;Hora&#92;&quot;:&#92;&quot;10:00&#92;&quot;,&#92;&quot;Segunda&#92;&quot;:&#92;&quot;&#92;&quot;,&#92;&quot;Ter&#92;&#92;u00e7a&#92;&quot;:&#92;&quot;&#92;&quot;,&#92;&quot;Quarta&#92;&quot;:&#92;&quot;Matem&#92;&#92;u00e1tica (Sala Normal_1) - Prof. Ana&#92;&quot;,&#92;&quot;Quinta&#92;&quot;:&#92;&quot;Matem&#92;&#92;u00e1tica (Sala Normal_1) - Prof. Ana&#92;&quot;,&#92;&quot;Sexta&#92;&quot;:&#92;&quot;&#92;&quot;},{&#92;&quot;Hora&#92;&quot;:&#92;&quot;11:00&#92;&quot;,&#92;&quot;Segunda&#92;&quot;:&#92;&quot;Matem&#92;&#92;u00e1tica (Sala Normal_1) - Prof. Ana&#92;&quot;,&#92;&quot;Ter&#92;&#92;u00e7a&#92;&quot;:&#92;&quot;&#92;&quot;,&#92;&quot;Quarta&#92;&quot;:&#92;&quot;&#92;&quot;,&#92;&quot;Quinta&#92;&quot;:&#92;&quot;Hist&#92;&#92;u00f3ria (Sala Normal_1) - Prof. Diana&#92;&quot;,&#92;&quot;Sexta&#92;&quot;:&#92;&quot;&#92;&quot;},{&#92;&quot;Hora&#92;&quot;:&#92;&quot;12:00&#92;&quot;,&#92;&quot;Segunda&#92;&quot;:&#92;&quot;Ingl&#92;&#92;u00eas (Sala Normal_1) - Prof. Diana&#92;&quot;,&#92;&quot;Ter&#92;&#92;u00e7a&#92;&quot;:&#92;&quot;Matem&#92;&#92;u00e1tica (Sala Normal_1) - Prof. Ana&#92;&quot;,&#92;&quot;Quarta&#92;&quot;:&#92;&quot;&#92;&quot;,&#92;&quot;Quinta&#92;&quot;:&#92;&quot;Ingl&#92;&#92;u00eas (Sala Normal_1) - Prof. Diana&#92;&quot;,&#92;&quot;Sexta&#92;&quot;:&#92;&quot;Educa&#92;&#92;u00e7&#92;&#92;u00e3o F&#92;&#92;u00edsica (Gin&#92;&#92;u00e1sio_1) - Prof. Eduardo&#92;&quot;},{&#92;&quot;Hora&#92;&quot;:&#92;&quot;13:00&#92;&quot;,&#92;&quot;Segunda&#92;&quot;:&#92;&quot;&#92;&quot;,&#92;&quot;Ter&#92;&#92;u00e7a&#92;&quot;:&#92;&quot;&#92;&quot;,&#92;&quot;Quarta&#92;&quot;:&#92;&quot;&#92;&quot;,&#92;&quot;Quinta&#92;&quot;:&#92;&quot;Ci&#92;&#92;u00eancias (Laborat&#92;&#92;u00f3rio_1) - Prof. Carla&#92;&quot;,&#92;&quot;Sexta&#92;&quot;:&#92;&quot;Educa&#92;&#92;u00e7&#92;&#92;u00e3o F&#92;&#92;u00edsica (Gin&#92;&#92;u00e1sio_1) - Prof. Eduardo&#92;&quot;}]&quot;' data-total-rows='6' data-total-columns='6' data-max-columns='50' data-banner-text='&quot;&quot;' data-pagination='false' data-page-size='6' data-field-types='[[&quot;Hora&quot;,[&quot;string&quot;,&quot;str&quot;]],[&quot;Segunda&quot;,[&quot;string&quot;,&quot;str&quot;]],[&quot;Ter\u00e7a&quot;,[&quot;string&quot;,&quot;str&quot;]],[&quot;Quarta&quot;,[&quot;string&quot;,&quot;str&quot;]],[&quot;Quinta&quot;,[&quot;string&quot;,&quot;str&quot;]],[&quot;Sexta&quot;,[&quot;string&quot;,&quot;str&quot;]]]' data-show-filters='true' data-show-download='true' data-show-search='true' data-show-column-summaries='false' data-show-data-types='true' data-show-page-size-selector='true' data-show-column-explorer='true' data-show-chart-builder='true' data-row-headers='[]' data-hidden-columns='[]' data-has-stable-row-id='false' data-lazy='false' data-preload='false'></marimo-table></marimo-ui-element><span class=\"markdown prose dark:prose-invert contents\"><h3 id=\"horario-do-professor\">Hor\u00e1rio do Professor</h3></span><marimo-ui-element object-id='aLJB-1' random-id='6d726ae9-1f67-8ca8-372f-76e6994368a4'><marimo-table data-initial-value='[]' data-label='null' data-data='&quot;[{&#92;&quot;Hora&#92;&quot;:&#92;&quot;8:00&#92;&quot;,&#92;&quot;Segunda&#92;&quot;:&#92;&quot;&#92;&quot;,&#92;&quot;Ter&#92;&#92;u00e7a&#92;&quot;:&#92;&quot;&#92;&quot;,&#92;&quot;Quarta&#92;&quot;:&#92;&quot;&#92;&quot;,&#92;&quot;Quinta&#92;&quot;:&#92;&quot;&#92;&quot;,&#92;&quot;Sexta&#92;&quot;:&#92;&quot;&#92;&quot;},{&#92;&quot;Hora&#92;&quot;:&#92;&quot;9:00&#92;&quot;,&#92;&quot;Segunda&#92;&quot;:&#92;&quot;&#92;&quot;,&#92;&quot;Ter&#92;&#92;u00e7a&#92;&quot;:&#92;&quot;&#92;&quot;,&#92;&quot;Quarta&#92;&quot;:&#92;&quot;&#92;&quot;,&#92;&quot;Quinta&#92;&quot;:&#92;&quot;&#92;&quot;,&#92;&quot;Sexta&#92;&quot;:&#92;&quot;&#92;&quot;},{&#92;&quot;Hora&#92;&quot;:&#92;&quot;10:00&#92;&quot;,&#92;&quot;Segunda&#92;&quot;:&#92;&quot;&#92;&quot;,&#92;&quot;Ter&#92;&#92;u00e7a&#92;&quot;:&#92;&quot;&#92;&quot;,&#92;&quot;Quarta&#92;&quot;:&#92;&quot;&#92;&quot;,&#92;&quot;Quinta&#92;&quot;:&#92;&quot;&#92;&quot;,&#92;&quot;Sexta&#92;&quot;:&#92;&quot;&#92;&quot;},{&#92;&quot;Hora&#92;&quot;:&#92;&quot;11:00&#92;&quot;,&#92;&quot;Segunda&#92;&quot;:&#92;&quot;&#92;&quot;,&#92;&quot;Ter&#92;&#92;u00e7a&#92;&quot;:&#92;&quot;&#92;&quot;,&#92;&quot;Quarta&#92;&quot;:&#92;&quot;&#92;&quot;,&#92;&quot;Quinta&#92;&quot;:&#92;&quot;&#92;&quot;,&#92;&quot;Sexta&#92;&quot;:&#92;&quot;&#92;&quot;},{&#92;&quot;Hora&#92;&quot;:&#92;&quot;12:00&#92;&quot;,&#92;&quot;Segunda&#92;&quot;:&#92;&quot;Educa&#92;&#92;u00e7&#92;&#92;u00e3o F&#92;&#92;u00edsica (Gin&#92;&#92;u00e1sio_1) - 7&#92;&#92;u00baB&#92;&quot;,&#92;&quot;Ter&#92;&#92;u00e7a&#92;&quot;:&#92;&quot;&#92;&quot;,&#92;&quot;Quarta&#92;&quot;:&#92;&quot;&#92;&quot;,&#92;&quot;Quinta&#92;&quot;:&#92;&quot;&#92;&quot;,&#92;&quot;Sexta&#92;&quot;:&#92;&quot;Educa&#92;&#92;u00e7&#92;&#92;u00e3o F&#92;&#92;u00edsica (Gin&#92;&#92;u00e1sio_1) - 7&#92;&#92;u00baA&#92;&quot;},{&#92;&quot;Hora&#92;&quot;:&#92;&quot;13:00&#92;&quot;,&#92;&quot;Segunda&#92;&quot;:&#92;&quot;Educa&#92;&#92;u00e7&#92;&#92;u00e3o F&#92;&#92;u00edsica (Gin&#92;&#92;u00e1sio_1) - 7&#92;&#92;u00baB&#92;&quot;,&#92;&quot;Ter&#92;&#92;u00e7a&#92;&quot;:&#92;&quot;&#92;&quot;,&#92;&quot;Quarta&#92;&quot;:&#92;&quot;&#92;&quot;,&#92;&quot;Quinta&#92;&quot;:&#92;&quot;&#92;&quot;,&#92;&quot;Sexta&#92;&quot;:&#92;&quot;Educa&#92;&#92;u00e7&#92;&#92;u00e3o F&#92;&#92;u00edsica (Gin&#92;&#92;u00e1sio_1) - 7&#92;&#92;u00baA&#92;&quot;}]&quot;' data-total-rows='6' data-total-columns='6' data-max-columns='50' data-banner-text='&quot;&quot;' data-pagination='false' data-page-size='6' data-field-types='[[&quot;Hora&quot;,[&quot;string&quot;,&quot;str&quot;]],[&quot;Segunda&quot;,[&quot;string&quot;,&quot;str&quot;]],[&quot;Ter\u00e7a&quot;,[&quot;string&quot;,&quot;object&quot;]],[&quot;Quarta&quot;,[&quot;string&quot;,&quot;object&quot;]],[&quot;Quinta&quot;,[&quot;string&quot;,&quot;object&quot;]],[&quot;Sexta&quot;,[&quot;string&quot;,&quot;str&quot;]]]' data-show-filters='true' data-show-download='true' data-show-search='true' data-show-column-summaries='false' data-show-data-types='true' data-show-page-size-selector='true' data-show-column-explorer='true' data-show-chart-builder='true' data-row-headers='[]' data-hidden-columns='[]' data-has-stable-row-id='false' data-lazy='false' data-preload='false'></marimo-table></marimo-ui-element></div>"
+          }
+        }
+      ],
+      "console": []
+    }
+  ]
+}

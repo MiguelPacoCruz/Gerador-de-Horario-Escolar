@@ -1,0 +1,654 @@
+# /// script
+# requires-python = ">=3.14"
+# dependencies = [
+#     "marimo>=0.24.2",
+# ]
+# ///
+
+import marimo
+
+__generated_with = "0.24.2"
+app = marimo.App(width="medium")
+
+
+@app.cell
+def _():
+    import marimo as mo
+
+    return (mo,)
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    # Trabalho Prático: Gerador de Horário Escolar
+
+    ## Contexto
+
+    Uma escola precisa de gerar automaticamente o horário semanal de um
+    conjunto de turmas, respeitando a carga letiva de cada disciplina, a
+    disponibilidade dos professores e as salas (normais e especiais,
+    partilhadas e em número limitado). Além disso, a escola quer poder
+    reagir rapidamente a pequenas alterações de recursos (um professor
+    fica indisponível, uma sala avaria, entra uma turma nova) sem ter de
+    recomeçar o planeamento do zero.
+
+    Este é um problema de **satisfação e otimização de restrições**
+    (CSP/CP). Cabe-te a ti escolher e justificar a técnica de modelação
+    e as ferramentas — o enunciado não fornece código de modelação nem
+    de apresentação de resultados.
+
+    ## Objetivo
+
+    Construir, num ou mais notebooks Marimo, um sistema que:
+
+    1. importa os dados de entrada de ficheiros (secção "Dados de
+       entrada"),
+    2. gera um horário que respeite os **requisitos obrigatórios**
+       (secção seguinte) e otimize o **objetivo** (buracos),
+    3. seja capaz de, a partir de um horário já gerado, produzir
+       eficientemente um novo horário válido quando os recursos mudam
+       ligeiramente (secção "Construção incremental").
+
+    O código, a escolha de bibliotecas (OR-Tools/CP-SAT é a sugestão da
+    disciplina, mas podes justificar outra abordagem), a forma de
+    importar os dados e a forma de apresentar os resultados são
+    decisões tuas — ver secção "O que é deixado ao teu critério".
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## Dados de entrada
+
+    Os dados de exemplo estão nos ficheiros CSV em `dados/`. O teu
+    notebook **não pode ter os dados escritos diretamente no código**
+    (nada de dicionários/listas Python com os valores) — tem de os ler
+    destes ficheiros, e continuar a funcionar se estes forem
+    substituídos por outro conjunto de dados no mesmo formato (mais
+    turmas, mais disciplinas, outros professores, etc.).
+
+    **`turmas.csv`** — uma turma por linha.
+
+    | turma |
+    |---|
+    | 7ºA |
+    | 7ºB |
+
+    **`disciplinas.csv`** — currículo. `carga_semanal` é o número de
+    tempos letivos por semana. `duplo_periodo` (`sim`/`nao`) indica que
+    a disciplina tem de ser dada em blocos de 2 tempos consecutivos, no
+    mesmo dia (ex.: uma disciplina com `carga_semanal=4` e
+    `duplo_periodo=sim` corresponde a 2 blocos duplos por semana, em
+    dias diferentes). `sala_especial`, quando preenchida, é o tipo de
+    sala (ver `salas.csv`) que a disciplina exige; quando vazia, a
+    disciplina usa uma sala normal qualquer.
+
+    | disciplina | professor | carga_semanal | duplo_periodo | sala_especial |
+    |---|---|---|---|---|
+    | Matemática | Prof. Ana | 4 | nao | |
+    | Português | Prof. Bruno | 4 | nao | |
+    | Ciências | Prof. Carla | 3 | nao | Laboratório |
+    | História | Prof. Diana | 2 | nao | |
+    | Inglês | Prof. Diana | 2 | nao | |
+    | Educação Física | Prof. Eduardo | 2 | sim | Ginásio |
+
+    **`salas.csv`** — tipos de sala disponíveis e quantas existem em
+    simultâneo. `tipo` é `normal` ou `especial`; para `especial`, o
+    nome da sala liga-se ao `sala_especial` de `disciplinas.csv`.
+
+    | sala | tipo | quantidade |
+    |---|---|---|
+    | Sala Normal | normal | 6 |
+    | Laboratório | especial | 1 |
+    | Ginásio | especial | 1 |
+
+    **`disponibilidade_excecoes.csv`** — por omissão todos os
+    professores estão disponíveis em todos os tempos da semana (5
+    dias × 5 tempos); este ficheiro lista só as *exceções*, isto é, os
+    (professor, dia, período) em que **não** estão disponíveis. `dia`
+    usa `Seg`/`Ter`/`Qua`/`Qui`/`Sex`; `periodo` é 1 a 5.
+
+    | professor | dia | periodo |
+    |---|---|---|
+    | Prof. Eduardo | Seg | 1 |
+    | Prof. Eduardo | Seg | 2 |
+    | Prof. Eduardo | Seg | 3 |
+    | … | … | … |
+
+    (o ficheiro completo lista o Prof. Eduardo como indisponível nos
+    primeiros 3 tempos de todos os dias — só dá aulas nos últimos 2
+    tempos de cada dia).
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## Requisitos obrigatórios
+
+    O horário gerado tem sempre de respeitar:
+
+    - **R1.** Uma turma não pode ter duas aulas em simultâneo.
+    - **R2.** Cada disciplina cumpre *exatamente* a carga semanal
+      definida em `disciplinas.csv`, para cada turma.
+    - **R3.** No máximo uma aula da mesma disciplina por dia, por
+      turma — exceto disciplinas de duplo período (ver R4), em que o
+      bloco de 2 tempos conta como uma só ocorrência nesse dia.
+    - **R4.** Disciplinas marcadas `duplo_periodo=sim` só podem ser
+      dadas em blocos de 2 tempos consecutivos, no mesmo dia (nunca um
+      tempo isolado).
+    - **R5.** Um professor não pode dar duas aulas em simultâneo, mesmo
+      que sejam a turmas ou disciplinas diferentes.
+    - **R6.** Um professor só pode dar aulas nos tempos em que está
+      disponível (`disponibilidade_excecoes.csv`).
+    - **R7.** Cada aula ocupa uma sala. Disciplinas com `sala_especial`
+      só podem usar salas desse tipo; as restantes usam salas
+      `normal`. Em nenhum tempo o número de aulas a decorrer num tipo
+      de sala pode exceder a `quantidade` desse tipo definida em
+      `salas.csv`.
+    - **R8.** Os dados de entrada são sempre lidos dos ficheiros CSV —
+      ver secção anterior — nunca escritos diretamente no código.
+
+    ## Objetivo (a otimizar)
+
+    - **O1.** Minimizar o número total de "buracos" no horário de cada
+      professor — um buraco é um tempo livre, no meio do dia, entre a
+      primeira e a última aula desse professor nesse dia.
+
+    Não precisas de encontrar sempre a solução ótima de O1 — ver
+    também os limites de tempo referidos em "Construção incremental".
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## Construção incremental (R9)
+
+    Numa escola real, o horário raramente é gerado do zero: é ajustado
+    depois de já existir um, quando algum recurso muda ligeiramente.
+    Resolver o problema completo outra vez, sempre que isso acontece,
+    é caro e pode alterar aulas que não precisavam de mudar.
+
+    - **R9.** O teu notebook tem de suportar o seguinte fluxo:
+        1. Gerar um horário válido `H0` a partir de um conjunto de
+           dados inicial (`dados/`).
+        2. Dada uma pequena alteração aos recursos — por exemplo, a
+           que está em `dados_v2/` (o Prof. Eduardo continua limitado
+           às tardes, mas a Prof. Ana passa a estar indisponível às
+           sextas-feiras nos 2 últimos tempos) — gerar um novo horário
+           válido `H1` que respeite R1–R8 com os novos dados.
+        3. `H1` deve ser produzido **de forma eficiente** (mais rápido
+           do que resolver `H1` do zero, sem usar `H0`) e **minimizando
+           o número de aulas que mudam de tempo/sala** entre `H0` e
+           `H1` — `H1` não precisa de ser ótimo em relação a O1.
+
+    Tens de justificar e demonstrar a tua abordagem (ex.: reaproveitar
+    `H0` como ponto de partida/*hint* para o solver, fixar as partes do
+    horário não afetadas pela mudança e resolver só o subproblema das
+    turmas/professores/salas afetados, ou outra técnica à tua escolha).
+    Deves apresentar evidência de que a tua construção incremental é de
+    facto mais rápida e/ou muda menos aulas do que resolver `H1` do
+    zero, para os dados fornecidos (ex.: medindo o tempo de execução e
+    o número de aulas alteradas nos dois casos).
+
+    Outros tipos de alteração de recursos que o teu notebook deve
+    conseguir tratar da mesma forma (não precisas de ficheiros de dados
+    para todos — basta que o teu código não assuma que só o cenário de
+    `dados_v2/` pode acontecer):
+
+    - um professor deixa de estar disponível nalguns tempos, ou fica
+      disponível em mais tempos;
+    - uma sala fica temporariamente indisponível (ex.: avaria);
+    - uma turma nova é criada a meio do ano;
+    - um professor é substituído por outro, na mesma disciplina.
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## O que é deixado ao teu critério
+
+    O enunciado define **o que** o horário tem de satisfazer, não
+    **como** o deves implementar. Ficam ao teu critério, desde que
+    justificadas no notebook:
+
+    - a técnica e biblioteca de modelação (CP-SAT do OR-Tools é a
+      sugestão da disciplina, mas és livre de escolher outra
+      abordagem de Lógica Computacional, justificando a escolha);
+    - a forma de ler e estruturar os dados dos ficheiros CSV (podes
+      usar `pandas`, `csv` da biblioteca standard, ou outra forma —
+      justifica a escolha se não usares pandas);
+    - a forma de representar e apresentar o horário resultante (podes
+      usar tabelas, texto, gráficos, `mo.ui` — o que achares mais
+      claro).
+
+    ## Como testar/validar
+
+    - Escreve, no teu notebook ou num ficheiro de testes à parte, uma
+      verificação automática de que um horário gerado respeita R1–R8
+      (não precisa de ser exaustiva, mas cobre pelo menos um caso de
+      cada restrição).
+    - Corre o fluxo completo da secção "Construção incremental" com os
+      dados fornecidos (`dados/` → `dados_v2/`) e mostra os resultados
+      (tempo de execução, nº de aulas alteradas) diretamente no
+      notebook.
+    - Testa com pelo menos um conjunto de dados diferente do fornecido
+      (mais uma turma, mais uma disciplina, outra exceção de
+      disponibilidade) para confirmares que não há nada "hardcoded".
+
+
+
+    ## Entrega
+
+    - Começe por criar uma estrutura "Git" na directoria local  TP1.1 que vai conter todos os elenetos no trabalho. Se ainda não tiver crie um utilizador GitHub para onde deve enviar ("push") os "commits" locais. No GitHub  o repositório deve ser  "clonable" após a data de entrega do trabalho.
+    - Relatório na forma de um ou mais notebooks Marimo; o notebook principal "horario_escolar.py" constrói-se editando o notebook anexo.
+    - Versão PDF do relatório
+
+
+    ## Extensões opcionais (bónus)
+
+    - **Preferências dos professores**: acrescenta mais termos à
+      função objetivo (ex.: penalizar aulas à primeira hora para quem
+      prefere não ter).
+    - **Escala**: mostra que a tua abordagem (incremental ou não)
+      continua a funcionar com um número de turmas/professores bem
+      maior do que o exemplo fornecido, e discute os limites que
+      encontraste.
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    # 1. Introdução
+
+    Na Ficha 3 foi estudado um problema de **alocação de recursos**, no qual se pretendia construir o horário de um centro de estudos através de **Programação Inteira**, utilizando a biblioteca OR-Tools e o solver SCIP. O problema consistia em alocar professores a salas e períodos, respeitando um conjunto de restrições relativas à utilização das salas e à carga horária dos professores.
+
+    O presente trabalho aborda um problema semelhante, mas num contexto escolar mais abrangente. Pretende-se construir automaticamente o horário de um conjunto de turmas, tendo em conta as disciplinas, os professores, as salas disponíveis e as respetivas disponibilidades. Para além de encontrar uma solução válida, pretende-se também otimizar o horário, minimizando o número de *buracos* nos horários dos professores.
+
+    Devido à maior complexidade do problema e à natureza das restrições envolvidas, será utilizada uma abordagem baseada em **Programação por Restrições** (*Constraint Programming*), recorrendo ao **CP-SAT** da biblioteca OR-Tools. Os dados necessários para a construção do horário serão obtidos a partir dos ficheiros CSV fornecidos, permitindo que o sistema seja utilizado com diferentes conjuntos de dados sem alterações na modelação.
+
+    Por fim, será abordada a **construção incremental** de horários. Partindo de um horário previamente gerado, pretende-se obter uma nova solução quando ocorre uma alteração nos recursos disponíveis, procurando manter tanto quanto possível as aulas que não são afetadas pela alteração. A abordagem será comparada com a resolução do novo problema a partir do zero, através do tempo de execução e do número de aulas que necessitam de ser alteradas.
+
+    Assim, este trabalho permite aplicar e aprofundar os conceitos de modelação e resolução de problemas de alocação estudados anteriormente, explorando simultaneamente uma abordagem de satisfação de restrições e a adaptação de soluções existentes perante alterações nos recursos.
+    """)
+    return
+
+
+@app.cell
+def _():
+    from ortools.sat.python import cp_model
+
+    horario = cp_model.CpModel()
+    return (horario,)
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    # 2. Dados de entrada e modelação do problema
+
+    A construção do horário depende de um conjunto de dados que descreve as turmas, as disciplinas, os professores, as salas disponíveis e as restrições de disponibilidade dos professores. Estes dados são fornecidos através de ficheiros CSV, permitindo que o sistema possa ser utilizado com diferentes conjuntos de dados sem ser necessário alterar a modelação ou o código.
+
+    A partir dos dados de entrada são definidos os conjuntos e parâmetros utilizados pelo modelo de Programação por Restrições. As decisões que não estão determinadas pelos ficheiros de entrada são representadas através de variáveis de decisão, cujo valor será determinado pelo solver CP-SAT.
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## 2.1 Dados de entrada
+
+    Os dados utilizados pelo sistema estão organizados em dois conjuntos de ficheiros CSV, localizados nas diretorias `dados/` e `dados_v2/`.
+
+    A diretoria `dados/` contém o conjunto de dados inicial, utilizado para construir o horário \(H_0\). A diretoria `dados_v2/` contém uma alteração aos recursos disponíveis, sendo utilizada posteriormente na construção incremental para obter um novo horário \(H_1\) a partir de \(H_0\).
+
+    Ambos os conjuntos seguem a mesma estrutura de ficheiros e o mesmo formato de dados. Desta forma, a modelação não depende de uma versão específica dos dados, permitindo que qualquer um dos conjuntos seja utilizado como entrada do sistema.
+
+    A diferença entre as duas versões é tratada como uma alteração aos dados do problema. No cenário fornecido, a disponibilidade da Prof. Ana é alterada em `dados_v2/`, enquanto a restante estrutura dos dados permanece compatível com o modelo inicial.
+
+    Assim, durante a primeira resolução são utilizados os ficheiros de `dados/`, enquanto a construção incremental utiliza os ficheiros de `dados_v2/` para determinar as novas restrições que devem ser respeitadas.
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ### 2.1.1 `turmas.csv`
+
+    Cada diretoria contém o respetivo ficheiro `turmas.csv`, que define as turmas consideradas nessa versão dos dados. Cada linha corresponde a uma turma.
+
+    A partir deste ficheiro é obtido o conjunto:
+
+    $$
+    T = \{t_1,t_2,\ldots,t_n\}
+    $$
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ### 2.1.2 `disciplinas.csv`
+
+    O ficheiro `disciplinas.csv` define as disciplinas, os professores responsáveis, a carga semanal, a necessidade de períodos duplos e, quando aplicável, o tipo de sala especial necessário.
+
+    Para cada disciplina \(d\), são obtidos os parâmetros:
+
+    $$
+    prof(d), \quad carga(d), \quad duplo(d), \quad sala(d)
+    $$
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ### 2.1.3 `salas.csv`
+
+    O ficheiro `salas.csv` define os tipos de sala disponíveis e a quantidade de recursos de cada tipo que podem ser utilizados simultaneamente.
+
+    Para cada tipo de sala \(s\), é definido:
+
+    $$
+    cap(s)
+    $$
+
+    representando a capacidade desse recurso.
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ### 2.1.4 `disponibilidade_excecoes.csv`
+
+    O ficheiro `disponibilidade_excecoes.csv` contém as exceções à disponibilidade dos professores.
+
+    Por omissão, um professor é considerado disponível em todos os períodos. Cada linha deste ficheiro identifica uma combinação de professor, dia e período em que esse professor não pode lecionar.
+
+    A partir destas exceções é construída a função:
+
+    $$
+    disp(p,d,h) \in \{0,1\}
+    $$
+
+    que será utilizada posteriormente para garantir o cumprimento da disponibilidade dos professores.
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## 2.2 Conjuntos e parâmetros
+
+    A partir dos ficheiros de entrada são construídos os conjuntos e parâmetros utilizados pelo modelo.
+
+    O horizonte temporal é constituído por cinco dias e cinco períodos por dia. Define-se:
+
+    $$
+    Dia = \{Seg,Ter,Qua,Qui,Sex\}
+    $$
+
+    e:
+
+    $$
+    Periodo = \{1,2,3,4,5\}
+    $$
+
+    O conjunto de turmas \(T\), o conjunto de disciplinas \(D\) e os conjuntos de professores e tipos de sala são obtidos diretamente dos ficheiros CSV.
+
+    Para cada disciplina \(d \in D\), são conhecidos:
+
+    $$
+    prof(d)
+    $$
+
+    $$
+    carga(d)
+    $$
+
+    $$
+    duplo(d)
+    $$
+
+    e, quando aplicável,
+
+    $$
+    sala(d)
+    $$
+
+    Estes valores são considerados parâmetros do problema, uma vez que são determinados pelos dados de entrada e não pelo solver.
+
+    É importante distinguir estes parâmetros das variáveis de decisão. Por exemplo, se o ficheiro indicar que Matemática é lecionada pela Prof. Ana, então:
+
+    $$
+    prof(\text{Matemática})=\text{Prof. Ana}
+    $$
+
+    é um valor fixo. O solver não decide qual o professor que leciona Matemática. No entanto, esta informação é utilizada para construir as restrições que impedem a Prof. Ana de lecionar duas aulas simultaneamente.
+
+    De forma semelhante, a carga semanal de uma disciplina é um parâmetro, enquanto os períodos concretos em que essa disciplina será lecionada são determinados pelo solver.
+    """)
+    return
+
+
+@app.cell
+def _(mo):
+    from pathlib import Path
+    import pandas as pd
+
+    # 1. Caminho para a pasta dos dados
+    PASTA_DADOS = Path("dados")
+
+    # 2. Leitura dos 4 ficheiros CSV
+    df_disciplinas = pd.read_csv(PASTA_DADOS / "disciplinas.csv")
+    df_turmas = pd.read_csv(PASTA_DADOS / "turmas.csv")
+    df_salas = pd.read_csv(PASTA_DADOS / "salas.csv")
+    df_excecoes = pd.read_csv(PASTA_DADOS / "disponibilidade_excecoes.csv")
+
+    # Visualização do estado no Marimo
+    mo.md(
+        f"""
+        **Dados de Horários Carregados (`{PASTA_DADOS}/`):**
+        - **Disciplinas:** {len(df_disciplinas)}
+        {mo.ui.table(df_disciplinas)}
+        - **Turmas:** {len(df_turmas)}
+        {mo.ui.table(df_turmas)}
+        - **Salas:** {len(df_salas)}
+        {mo.ui.table(df_salas)}
+        - **Exceções de Disponibilidade:** {len(df_excecoes)}
+        {mo.ui.table(df_excecoes)}
+        """
+    )
+    return (df_salas,)
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## 2.3 Variáveis de decisão
+
+    As variáveis de decisão representam os aspetos do horário que não estão definidos nos dados de entrada e que devem ser determinados pelo solver.
+
+    Cada aula é associada a uma turma e a uma disciplina. A partir da carga semanal da disciplina são criadas as ocorrências necessárias para representar todas as aulas que devem aparecer no horário.
+
+    Para cada ocorrência de aula \(a\), são consideradas variáveis que determinam a sua localização no horário.
+
+    A variável:
+
+    $$
+    dia(a)
+    $$
+
+    representa o dia da semana em que a aula ocorre.
+
+    A variável:
+
+    $$
+    periodo(a)
+    $$
+
+    representa o primeiro período ocupado pela aula.
+
+    Por fim, a variável:
+
+    $$
+    sala(a)
+    $$
+
+    representa o tipo de sala atribuído à aula, respeitando as necessidades definidas para a respetiva disciplina.
+
+    O professor e a disciplina associados à ocorrência não são variáveis de decisão, pois são determinados pelos dados de entrada. O mesmo acontece com a turma à qual a ocorrência pertence.
+
+    Por exemplo, se uma ocorrência representa uma aula de Matemática da turma 7ºA e a disciplina Matemática está associada à Prof. Ana, então temos:
+
+    $$
+    turma(a)=7ºA
+    $$
+
+    $$
+    disciplina(a)=\text{Matemática}
+    $$
+
+    $$
+    professor(a)=\text{Prof. Ana}
+    $$
+
+    Estes valores são fixos. O solver terá de determinar apenas quando e onde essa aula será realizada.
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## 2.4 Representação das aulas
+
+    Uma aula normal ocupa um único período. Assim, se uma ocorrência \(a\) tiver:
+
+    $$
+    periodo(a)=3
+    $$
+
+    então ocupa apenas o terceiro período do dia definido por \(dia(a)\).
+
+    No caso de uma disciplina com `duplo_periodo = sim`, cada ocorrência representa um bloco de dois períodos consecutivos. Se:
+
+    $$
+    periodo(a)=3
+    $$
+
+    então a aula ocupa os períodos 3 e 4.
+
+    Consequentemente, uma aula de duplo período não pode começar no quinto período, uma vez que não existiria um período seguinte disponível.
+
+    A carga semanal determina o número de períodos que cada disciplina deve ocupar. Para uma disciplina normal, uma carga de quatro períodos corresponde a quatro ocorrências de um período. Para uma disciplina de duplo período, uma carga de quatro períodos corresponde a dois blocos de dois períodos.
+
+    Esta representação permite que as restrições relativas à utilização simultânea de turmas, professores e salas sejam posteriormente aplicadas sobre as aulas que ocupam cada período.
+
+    Desta forma, a modelação estabelece uma separação entre os **dados fixos do problema**, provenientes dos ficheiros CSV, e as **decisões do solver**, relativas à distribuição das aulas ao longo da semana. As restrições R1–R8 apresentadas na secção seguinte serão então formuladas sobre estas variáveis e parâmetros.
+    """)
+    return
+
+
+@app.cell
+def _(df_salas, horario):
+    x = {}
+
+    print(df_salas.iloc[0,2])
+
+    dia = horario.NewIntVar(0, 4, name="dia")
+    periodo = horario.NewIntVar(0, 4, name="periodo")
+
+    tipos_salas = df_salas.set_index("id_sala")["tipo_sala"].to_dict()
+    sala = horario.NewIntVar(0, df_salas.loc["Sala Normal","quantidade"], name="sala")
+
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    # 3. Modelação das restrições
+
+    ## 3.1 R1 — ...
+    ## 3.2 R2 — ...
+    ...
+    ## 3.8 R8 — ...
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    # 4. Função objetivo
+
+    ## 4.1 Minimização dos buracos
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    # 5. Implementação e geração do horário
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    # 6. Validação da solução
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    # 7. Construção incremental
+
+    ## 7.1 Horário inicial H0
+    ## 7.2 Alteração dos recursos
+    ## 7.3 Construção de H1
+    ## 7.4 Comparação com resolução do zero
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    # 8. Testes com outros dados
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    # 9. Conclusão
+    """)
+    return
+
+
+if __name__ == "__main__":
+    app.run()
